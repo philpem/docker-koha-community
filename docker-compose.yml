@@ -1,7 +1,4 @@
-version: '3.8'
-
 services:
-
   koha:
     build:
       context: .
@@ -11,27 +8,36 @@ services:
       - DAC_READ_SEARCH
     depends_on:
       - koha-db
+      - koha-memcached
     environment:
       DB_HOST: koha-db
       DB_ROOT_PASSWORD: secret
       DOMAIN: .example.com
-      KOHA_TRANSLATE_LANGUAGES: "ca-ES"
-      INTRAPORT: 80
+      KOHA_TRANSLATE_LANGUAGES: "en-GB"
+      INTRAPORT: 8080
       INTRAPREFIX: library
       INTRASUFFIX: .admin
       OPACPREFIX: library
+      OPACPORT: 80
     ports:
       - "80:80"
       - "8080:8080"
+    volumes:
+      - ./koha-data:/var/lib/koha
+    restart: always
 
   koha-db:
     container_name: koha-db
     environment:
       MYSQL_ROOT_PASSWORD: secret
+      MARIADB_AUTO_UPGRADE: true
     # Newer versions not working
-    image: mariadb:10.3
+    image: mariadb:lts
+    volumes:
+      - ./koha-db-data:/var/lib/mysql:Z
 
-  memcached:
+  koha-memcached:
     command: memcached -m 64m
-    container_name: memcached
+    container_name: koha-memcached
     image: memcached
+

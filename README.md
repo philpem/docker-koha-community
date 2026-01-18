@@ -1,3 +1,19 @@
+# Koha Community Edition Docker container
+
+This is an updated version of [Kedu SCCL's original version](https://github.com/Kedu-SCCL/docker-koha-community). Changes include:
+
+  - Switch to later versions of MariaDB and Debian.
+  - Koha versions from early 2025 need GD::Barcode 2.01 or later -- make sure this is available.
+  - Fix the ordering of startup processes so Koha uses Memcached.
+  - Add volumes to the compose script so data is stored outside of the containers.
+  - Put the intranet and OPAC on different ports.
+  - Fix population of the database when it's completely empty.
+
+This can be used standalone to try out Koha, but if you want to deploy this you'll probably want to customise the `docker-compose.yml`.
+
+
+# Original documentation
+
 - [Introduction](#introduction)
 - [For the impatients](#for-the-impatients)
 - [Environment Variables](#environment-variables)
@@ -48,7 +64,7 @@ Password: type 'docker exec -ti d21a7f723205 koha-passwd koha' to display it
 ====================================================
 ```
 
-3. Point your browsert to:
+3. Point your browser to:
 
 http://localhost:8080
 

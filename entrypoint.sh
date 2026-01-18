@@ -40,9 +40,11 @@ fix_database_permissions () {
     echo "*** Fixing database permissions to be able to use an external server"
     # TODO: restrict to the docker container private IP
     # TODO: investigate how to change hardcoded 'koha_' preffix in database name and username creatingg '/etc/koha/sites/${LIBRARY_NAME}/koha-conf.xml.in'
-    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "update mysql.user set Host='%' where Host='localhost' and User='koha_$LIBRARY_NAME';"
+    #mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "update mysql.user set Host='%' where Host='localhost' and User='koha_$LIBRARY_NAME';"
+    #mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "flush privileges;"
+    #mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "grant all on koha_$LIBRARY_NAME.* to 'koha_$LIBRARY_NAME'@'%';"
+    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "rename user 'koha_$LIBRARY_NAME'@'localhost' to 'koha_$LIBRARY_NAME'@'%';"
     mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "flush privileges;"
-    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "grant all on koha_$LIBRARY_NAME.* to 'koha_$LIBRARY_NAME'@'%';"
 }
 
 log_database_credentials () {
@@ -93,8 +95,8 @@ update_apache2_conf () {
 
 create_db () {
     echo "*** Creating database..."
-    while ! mysqladmin ping -h"$DB_HOST" --silent; do
-        echo "*** Database server still down. Waiting $SLEEP seconds until retry"
+    while ! mysqladmin ping -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" --silent; do
+        echo "*** Database server '$DB_HOST' still down. Waiting $SLEEP seconds until retry"
         sleep $SLEEP
     done
     if is_exists_db
@@ -112,6 +114,9 @@ create_db () {
         koha-create --create-db $LIBRARY_NAME
         # Needed because 'koha-create' restarts apache and puts process in background"
         service apache2 stop
+        # Populate the database
+        echo "*** Koha populate db and fix permissions"
+        mysql -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" koha_$LIBRARY_NAME < ./usr/share/koha/intranet/cgi-bin/installer/data/mysql/kohastructure.sql
         fix_database_permissions
     fi
 }
@@ -145,11 +150,12 @@ start_koha() {
 # 1st docker container execution
 if [ ! -f /etc/configured ]; then
     echo "*** Running first time configuration..."
+    sleep 10
     enable_httpd_modules
     update_koha_database_conf
+    update_koha_sites
     create_db
     enable_plack
-    update_koha_sites
     update_httpd_listening_ports
     install_koha_translate_languages
 
