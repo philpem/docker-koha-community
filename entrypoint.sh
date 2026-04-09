@@ -144,7 +144,7 @@ start_koha() {
 }
 
 # 1st docker container execution
-if [ ! -f /var/lib/koha/configured ]; then
+if [ ! -f /var/lib/koha/${LIBRARY_NAME}/configured ]; then
     echo "*** Running first time configuration..."
     enable_httpd_modules
     update_koha_database_conf
@@ -156,7 +156,7 @@ if [ ! -f /var/lib/koha/configured ]; then
 
     update_apache2_conf
     log_database_credentials
-    date > /var/lib/koha/configured
+    date > /var/lib/koha/${LIBRARY_NAME}/configured
 else
     # 2nd+ executions
     echo "*** Looks already configured"
