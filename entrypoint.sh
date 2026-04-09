@@ -24,10 +24,10 @@ update_koha_sites () {
 update_httpd_listening_ports () {
     echo "*** Fixing apache2 listening ports"
     if [ "80" != "$INTRAPORT" ]; then
-        echo "Listen $INTRAPORT" >> /etc/apache2/ports.conf
+        grep -q "Listen $INTRAPORT" /etc/apache2/ports.conf || echo "Listen $INTRAPORT" >> /etc/apache2/ports.conf
     fi
     if [ "80" != "$OPACPORT" ] && [ $INTRAPORT != $OPACPORT ]; then
-        echo "Listen $OPACPORT" >> /etc/apache2/ports.conf
+        grep -q "Listen $OPACPORT" /etc/apache2/ports.conf || echo "Listen $OPACPORT" >> /etc/apache2/ports.conf
     fi
 }
 
@@ -40,18 +40,16 @@ fix_database_permissions () {
     echo "*** Fixing database permissions to be able to use an external server"
     # TODO: restrict to the docker container private IP
     # TODO: investigate how to change hardcoded 'koha_' preffix in database name and username creatingg '/etc/koha/sites/${LIBRARY_NAME}/koha-conf.xml.in'
-    #mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "update mysql.user set Host='%' where Host='localhost' and User='koha_$LIBRARY_NAME';"
-    #mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "flush privileges;"
-    #mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "grant all on koha_$LIBRARY_NAME.* to 'koha_$LIBRARY_NAME'@'%';"
-    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "rename user 'koha_$LIBRARY_NAME'@'localhost' to 'koha_$LIBRARY_NAME'@'%';"
+    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "update mysql.user set Host='%' where Host='localhost' and User='koha_$LIBRARY_NAME';"
     mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "flush privileges;"
+    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "grant all on koha_$LIBRARY_NAME.* to 'koha_$LIBRARY_NAME'@'%';"
 }
 
 log_database_credentials () {
     echo "===================================================="
     echo "IMPORTANT: credentials needed to post-installation through your browser"
     echo "Username: koha_$LIBRARY_NAME"
-    echo "Password: type 'docker exec -ti `hostname` koha-passwd $LIBRARY_NAME'" to display it
+    echo "Password: type 'docker exec -ti $(hostname) koha-passwd $LIBRARY_NAME' to display it"
     echo "===================================================="
 }
 
@@ -96,15 +94,16 @@ update_apache2_conf () {
 create_db () {
     echo "*** Creating database..."
     while ! mysqladmin ping -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" --silent; do
-        echo "*** Database server '$DB_HOST' still down. Waiting $SLEEP seconds until retry"
+        echo "*** Database server still down. Waiting $SLEEP seconds until retry"
         sleep $SLEEP
     done
     if is_exists_db
     then
         echo "*** Database already exists"
-        echo "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > /etc/koha-passwd
-        koha-create --use-db $LIBRARY_NAME --passwdfile /etc/koha-passwd
-        rm -fr /etc/koha-passwd
+        PASSWD_FILE=$(mktemp)
+        echo "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$PASSWD_FILE"
+        koha-create --use-db $LIBRARY_NAME --passwdfile "$PASSWD_FILE"
+        rm -f "$PASSWD_FILE"
         # Needed because 'koha-create' restarts apache and puts process in background"
         service apache2 stop
         echo "*** Manual indexing is needed..."
@@ -114,9 +113,6 @@ create_db () {
         koha-create --create-db $LIBRARY_NAME
         # Needed because 'koha-create' restarts apache and puts process in background"
         service apache2 stop
-        # Populate the database
-        echo "*** Koha populate db and fix permissions"
-        mysql -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" koha_$LIBRARY_NAME < ./usr/share/koha/intranet/cgi-bin/installer/data/mysql/kohastructure.sql
         fix_database_permissions
     fi
 }
@@ -148,23 +144,32 @@ start_koha() {
 }
 
 # 1st docker container execution
-if [ ! -f /etc/configured ]; then
+if [ ! -f /var/lib/koha/configured ]; then
     echo "*** Running first time configuration..."
-    sleep 10
     enable_httpd_modules
     update_koha_database_conf
-    update_koha_sites
     create_db
     enable_plack
+    update_koha_sites
     update_httpd_listening_ports
     install_koha_translate_languages
 
     update_apache2_conf
     log_database_credentials
-    date > /etc/configured
+    date > /var/lib/koha/configured
 else
     # 2nd+ executions
     echo "*** Looks already configured"
+    update_koha_database_conf
+    update_koha_sites
+    update_httpd_listening_ports
+    PASSWD_FILE=$(mktemp)
+    echo "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$PASSWD_FILE"
+    koha-create --use-db $LIBRARY_NAME --passwdfile "$PASSWD_FILE"
+    rm -f "$PASSWD_FILE"
+    service apache2 stop
+    update_apache2_conf
+    koha-plack --enable $LIBRARY_NAME
 fi
 
 start_koha
