@@ -124,13 +124,23 @@ enable_plack () {
     koha-plack --enable ${LIBRARY_NAME}
 }
 
+start_watchdog() {
+    if [ "${WATCHDOG_ENABLED:-yes}" = "yes" ]; then
+        echo "*** Starting watchdog..."
+        /docker/watchdog.sh &
+    else
+        echo "*** Watchdog disabled via WATCHDOG_ENABLED"
+    fi
+}
+
 start_koha() {
     echo "*** Starting koha with plack..."
     koha-plack --start $LIBRARY_NAME
     echo "*** Starting indexer..."
-    koha-indexer --start $LIBRARY_NAME 
+    koha-indexer --start $LIBRARY_NAME
     echo "*** Starting zebra..."
     koha-zebra --start $LIBRARY_NAME
+    start_watchdog
     echo "*** Starting apache in foreground..."
     apachectl -D FOREGROUND
 }
