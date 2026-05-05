@@ -91,6 +91,13 @@ update_apache2_conf () {
     a2ensite ${LIBRARY_NAME}
 }
 
+reconnect_db () {
+    PASSWD_FILE=$(mktemp)
+    echo "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$PASSWD_FILE"
+    koha-create --use-db $LIBRARY_NAME --passwdfile "$PASSWD_FILE"
+    rm -f "$PASSWD_FILE"
+}
+
 create_db () {
     echo "*** Creating database..."
     while ! mysqladmin ping -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" --silent; do
@@ -100,31 +107,16 @@ create_db () {
     if is_exists_db
     then
         echo "*** Database already exists"
-        PASSWD_FILE=$(mktemp)
-        echo "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$PASSWD_FILE"
-        koha-create --use-db $LIBRARY_NAME --passwdfile "$PASSWD_FILE"
-        rm -f "$PASSWD_FILE"
+        reconnect_db
         # Needed because 'koha-create' restarts apache and puts process in background"
-        service apache2 stop
         echo "*** Manual indexing is needed..."
         koha-rebuild-zebra -v --full $(/usr/sbin/koha-list)
     else
         echo "*** koha-create with db"
         koha-create --create-db $LIBRARY_NAME
         # Needed because 'koha-create' restarts apache and puts process in background"
-        service apache2 stop
         fix_database_permissions
     fi
-}
-
-enable_httpd_modules () {
-    echo "*** Enabling httpd modules..."
-    rm -R /var/www/html/
-    a2enmod rewrite \
-      cgi \
-      headers \
-      proxy_http \
-      && a2dissite 000-default
 }
 
 enable_plack () {
@@ -143,33 +135,27 @@ start_koha() {
     apachectl -D FOREGROUND
 }
 
+update_koha_database_conf
+update_koha_sites
+update_httpd_listening_ports
+
 # 1st docker container execution
 if [ ! -f /var/lib/koha/${LIBRARY_NAME}/configured ]; then
     echo "*** Running first time configuration..."
-    enable_httpd_modules
-    update_koha_database_conf
     create_db
-    enable_plack
-    update_koha_sites
-    update_httpd_listening_ports
     install_koha_translate_languages
-
-    update_apache2_conf
     log_database_credentials
     date > /var/lib/koha/${LIBRARY_NAME}/configured
 else
     # 2nd+ executions
-    echo "*** Looks already configured"
-    update_koha_database_conf
-    update_koha_sites
-    update_httpd_listening_ports
-    PASSWD_FILE=$(mktemp)
-    echo "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$PASSWD_FILE"
-    koha-create --use-db $LIBRARY_NAME --passwdfile "$PASSWD_FILE"
-    rm -f "$PASSWD_FILE"
-    service apache2 stop
-    update_apache2_conf
-    koha-plack --enable $LIBRARY_NAME
+    echo "*** Already configured, reconnecting to database..."
+    reconnect_db
 fi
 
+enable_plack
+update_apache2_conf
+
+# koha-create starts apache as a side effect; stop it so we can
+# relaunch in the foreground with start_koha
+service apache2 stop 2>/dev/null || true
 start_koha
