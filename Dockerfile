@@ -3,6 +3,10 @@
 FROM debian:testing
 LABEL maintainer="philpem@philpem.me.uk"
 
+# Avoid debconf "unable to initialize frontend: Readline" warnings during build.
+# ARG instead of ENV so the value doesn't leak into the running container.
+ARG DEBIAN_FRONTEND=noninteractive
+
 # https://koha-community.org/
 ARG KOHA_VERSION=stable
 ARG PKG_URL=https://debian.koha-community.org/koha
