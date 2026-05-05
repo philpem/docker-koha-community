@@ -98,6 +98,18 @@ reconnect_db () {
     rm -f "$PASSWD_FILE"
 }
 
+upgrade_schema () {
+    # Idempotent: if the DB schema matches the running Koha version this is a
+    # no-op. When it doesn't (e.g. after a Koha image upgrade) it applies the
+    # pending migrations so Plack workers can start cleanly instead of leaving
+    # Apache returning 503 until somebody completes the web upgrade flow.
+    if [ "${KOHA_AUTO_UPGRADE_SCHEMA:-yes}" = "yes" ]; then
+        echo "*** Running koha-upgrade-schema (no-op if already current)..."
+        koha-upgrade-schema "$LIBRARY_NAME" || \
+            echo "*** WARNING: koha-upgrade-schema exited non-zero; continuing"
+    fi
+}
+
 create_db () {
     echo "*** Creating database..."
     while ! mysqladmin ping -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" --silent; do
@@ -160,6 +172,7 @@ else
     # 2nd+ executions
     echo "*** Already configured, reconnecting to database..."
     reconnect_db
+    upgrade_schema
 fi
 
 enable_plack

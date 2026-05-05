@@ -428,6 +428,14 @@ Tunable environment variables:
 | `WATCHDOG_HTTP_TIMEOUT`   | `10`    | Per-request timeout for HTTP probes.                      |
 | `WATCHDOG_HTTP_FAILURES`  | `2`     | Consecutive HTTP failures before Plack is restarted.      |
 | `HEALTHCHECK_TIMEOUT`     | `10`    | Per-request timeout for the Docker healthcheck.           |
+| `KOHA_AUTO_UPGRADE_SCHEMA`| `yes`   | Run `koha-upgrade-schema` on startup. No-op if up to date.|
+
+After a Koha image upgrade the database schema can lag behind the code,
+which leaves Plack workers unable to start and Apache returning 503.
+`koha-upgrade-schema` runs automatically on every start (in the
+"already configured" path) so the migration happens before Plack comes
+up. It's idempotent — when the DB is already current it just logs that
+and exits.
 
 # Allowed volumes
 
