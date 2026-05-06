@@ -98,6 +98,18 @@ reconnect_db () {
     rm -f "$PASSWD_FILE"
 }
 
+upgrade_schema () {
+    # Idempotent: if the DB schema matches the running Koha version this is a
+    # no-op. When it doesn't (e.g. after a Koha image upgrade) it applies the
+    # pending migrations so Plack workers can start cleanly instead of leaving
+    # Apache returning 503 until somebody completes the web upgrade flow.
+    if [ "${KOHA_AUTO_UPGRADE_SCHEMA:-yes}" = "yes" ]; then
+        echo "*** Running koha-upgrade-schema (no-op if already current)..."
+        koha-upgrade-schema "$LIBRARY_NAME" || \
+            echo "*** WARNING: koha-upgrade-schema exited non-zero; continuing"
+    fi
+}
+
 create_db () {
     echo "*** Creating database..."
     while ! mysqladmin ping -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" --silent; do
@@ -124,13 +136,26 @@ enable_plack () {
     koha-plack --enable ${LIBRARY_NAME}
 }
 
+start_watchdog() {
+    if [ "${WATCHDOG_ENABLED:-yes}" = "yes" ]; then
+        echo "*** Starting watchdog..."
+        /docker/watchdog.sh &
+    else
+        echo "*** Watchdog disabled via WATCHDOG_ENABLED"
+    fi
+}
+
 start_koha() {
     echo "*** Starting koha with plack..."
     koha-plack --start $LIBRARY_NAME
+    # koha-create (run by reconnect_db) already starts the indexer, so use
+    # --restart here to avoid the "already running: failed!" warning on
+    # the second invocation while still working on a fresh boot.
     echo "*** Starting indexer..."
-    koha-indexer --start $LIBRARY_NAME 
+    koha-indexer --restart $LIBRARY_NAME
     echo "*** Starting zebra..."
     koha-zebra --start $LIBRARY_NAME
+    start_watchdog
     echo "*** Starting apache in foreground..."
     apachectl -D FOREGROUND
 }
@@ -150,6 +175,7 @@ else
     # 2nd+ executions
     echo "*** Already configured, reconnecting to database..."
     reconnect_db
+    upgrade_schema
 fi
 
 enable_plack

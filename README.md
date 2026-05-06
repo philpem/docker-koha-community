@@ -8,6 +8,9 @@ This is an updated version of [Kedu SCCL's original version](https://github.com/
   - Add volumes to the compose script so data is stored outside of the containers.
   - Put the intranet and OPAC on different ports.
   - Fix population of the database when it's completely empty.
+  - Auto-recovery: an in-container watchdog restarts Plack/Zebra/the indexer
+    if they crash or get wedged, and a Docker `HEALTHCHECK` reports the
+    container as unhealthy when the OPAC or staff intranet returns 502/503.
 
 This can be used standalone to try out Koha, but if you want to deploy this you'll probably want to customise the `docker-compose.yml`.
 
@@ -395,6 +398,44 @@ Example:
 ```
 -e OPACPREFIX=opac
 ```
+
+# Auto-recovery
+
+Apache runs in the foreground inside the container, but it depends on
+several background services (Plack/Starman, Zebra, the indexer). If one
+of those crashes the container stays "up" — Apache just starts returning
+HTTP 503 to the user.
+
+To recover automatically:
+
+* `/docker/watchdog.sh` runs in the background. Every `WATCHDOG_INTERVAL`
+  seconds it checks `koha-plack`, `koha-zebra` and `koha-indexer` and
+  restarts any that aren't running. It also makes an HTTP request to the
+  OPAC and intranet ports; if it gets 502/503/504 (or no response) for
+  `WATCHDOG_HTTP_FAILURES` consecutive checks it restarts Plack.
+* A Docker `HEALTHCHECK` probes the same ports so orchestrators can see
+  when the container is unhealthy. Combine it with an external auto-heal
+  tool (e.g. [willfarrell/autoheal](https://github.com/willfarrell/autoheal))
+  or Kubernetes liveness probes if you want the whole container to be
+  recreated when the watchdog can't recover on its own.
+
+Tunable environment variables:
+
+| Variable                  | Default | Description                                               |
+| ------------------------- | ------- | --------------------------------------------------------- |
+| `WATCHDOG_ENABLED`        | `yes`   | Set to anything else to disable the watchdog.             |
+| `WATCHDOG_INTERVAL`       | `30`    | Seconds between checks.                                   |
+| `WATCHDOG_HTTP_TIMEOUT`   | `10`    | Per-request timeout for HTTP probes.                      |
+| `WATCHDOG_HTTP_FAILURES`  | `2`     | Consecutive HTTP failures before Plack is restarted.      |
+| `HEALTHCHECK_TIMEOUT`     | `10`    | Per-request timeout for the Docker healthcheck.           |
+| `KOHA_AUTO_UPGRADE_SCHEMA`| `yes`   | Run `koha-upgrade-schema` on startup. No-op if up to date.|
+
+After a Koha image upgrade the database schema can lag behind the code,
+which leaves Plack workers unable to start and Apache returning 503.
+`koha-upgrade-schema` runs automatically on every start (in the
+"already configured" path) so the migration happens before Plack comes
+up. It's idempotent — when the DB is already current it just logs that
+and exits.
 
 # Allowed volumes
 

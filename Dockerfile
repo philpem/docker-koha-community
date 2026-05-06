@@ -3,6 +3,10 @@
 FROM debian:testing
 LABEL maintainer="philpem@philpem.me.uk"
 
+# Avoid debconf "unable to initialize frontend: Readline" warnings during build.
+# ARG instead of ENV so the value doesn't leak into the running container.
+ARG DEBIAN_FRONTEND=noninteractive
+
 # https://koha-community.org/
 ARG KOHA_VERSION=stable
 ARG PKG_URL=https://debian.koha-community.org/koha
@@ -11,6 +15,7 @@ ARG PKG_URL=https://debian.koha-community.org/koha
 # Make sure we have libgd-barcode-perl 2.01 or later
 # If there's a problem here, run Debian Testing instead of Stable.
 RUN apt-get update && apt-get install -y \
+  curl \
   wget \
   gnupg && \
   apt-get -y satisfy "libgd-barcode-perl (>= 2.01)" && \
@@ -37,9 +42,14 @@ RUN a2enmod rewrite \
 RUN mkdir /docker
 
 COPY entrypoint.sh /docker/
+COPY watchdog.sh /docker/
+COPY healthcheck.sh /docker/
 
 COPY templates /docker/templates
 
-RUN chmod +x /docker/entrypoint.sh
+RUN chmod +x /docker/entrypoint.sh /docker/watchdog.sh /docker/healthcheck.sh
+
+HEALTHCHECK --interval=30s --timeout=15s --start-period=5m --retries=3 \
+  CMD /docker/healthcheck.sh
 
 ENTRYPOINT ["/docker/entrypoint.sh"]
