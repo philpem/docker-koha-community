@@ -148,8 +148,11 @@ start_watchdog() {
 start_koha() {
     echo "*** Starting koha with plack..."
     koha-plack --start $LIBRARY_NAME
+    # koha-create (run by reconnect_db) already starts the indexer, so use
+    # --restart here to avoid the "already running: failed!" warning on
+    # the second invocation while still working on a fresh boot.
     echo "*** Starting indexer..."
-    koha-indexer --start $LIBRARY_NAME
+    koha-indexer --restart $LIBRARY_NAME
     echo "*** Starting zebra..."
     koha-zebra --start $LIBRARY_NAME
     start_watchdog
