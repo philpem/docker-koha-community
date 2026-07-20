@@ -16,16 +16,18 @@ ARG PKG_URL=https://debian.koha-community.org/koha
 
 # Install Debian baseline packages.
 # Koha needs libgd-barcode-perl >= 2.01, which stable (Trixie) doesn't ship
-# (it has 2.00). Add unstable (sid) as a source, pinned to a low priority so
-# it is only used when a version constraint forces it, then pull just the
-# newer libgd-barcode-perl. The module is Architecture: all and depends only
-# on packages already in stable, so nothing else upgrades from unstable.
+# (it has 2.00). Add unstable (sid) as a source, but pin it so ONLY
+# libgd-barcode-perl is taken from it: the general '*' rule at priority 100
+# keeps every other sid package below stable's default of 500, while the
+# targeted rule at 990 lifts libgd-barcode-perl above stable so its 2.01 is
+# preferred. The module is Architecture: all and depends only on packages
+# already in stable, so nothing else upgrades from unstable.
 RUN apt-get update && apt-get install -y \
   curl \
   wget \
   gnupg && \
   echo "deb http://deb.debian.org/debian sid main" > /etc/apt/sources.list.d/sid.list && \
-  printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/99-sid && \
+  printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n\nPackage: libgd-barcode-perl\nPin: release a=unstable\nPin-Priority: 990\n' > /etc/apt/preferences.d/99-sid && \
   apt-get update && \
   apt-get -y satisfy "libgd-barcode-perl (>= 2.01)" && \
   rm -rf /var/lib/apt/lists/*
