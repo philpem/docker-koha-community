@@ -1,6 +1,9 @@
-# NOTE: Debian Testing (Forky) is currently required because the
-# version of libgd-barcode-perl in Trixie is too old for Koha.
-FROM debian:testing
+# Koha needs libgd-barcode-perl >= 2.01. Debian stable (Trixie) ships only
+# 2.00, but it carries every other Koha dependency -- including
+# libauthen-cas-client-perl, which was autoremoved from testing/Forky in
+# June 2026 (Debian bug #879564). So we base on stable and pull just
+# libgd-barcode-perl from unstable (sid), which has 2.01.
+FROM debian:trixie
 LABEL maintainer="philpem@philpem.me.uk"
 
 # Avoid debconf "unable to initialize frontend: Readline" warnings during build.
@@ -11,13 +14,19 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG KOHA_VERSION=stable
 ARG PKG_URL=https://debian.koha-community.org/koha
 
-# Install Debian baseline packages
-# Make sure we have libgd-barcode-perl 2.01 or later
-# If there's a problem here, run Debian Testing instead of Stable.
+# Install Debian baseline packages.
+# Koha needs libgd-barcode-perl >= 2.01, which stable (Trixie) doesn't ship
+# (it has 2.00). Add unstable (sid) as a source, pinned to a low priority so
+# it is only used when a version constraint forces it, then pull just the
+# newer libgd-barcode-perl. The module is Architecture: all and depends only
+# on packages already in stable, so nothing else upgrades from unstable.
 RUN apt-get update && apt-get install -y \
   curl \
   wget \
   gnupg && \
+  echo "deb http://deb.debian.org/debian sid main" > /etc/apt/sources.list.d/sid.list && \
+  printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/99-sid && \
+  apt-get update && \
   apt-get -y satisfy "libgd-barcode-perl (>= 2.01)" && \
   rm -rf /var/lib/apt/lists/*
 
