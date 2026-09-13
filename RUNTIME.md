@@ -16,9 +16,11 @@ The container starts and manages:
 - Debian cron plus anacron, so the cron definitions shipped by `koha-common`
   remain the source of truth for scheduled Koha maintenance.
 - The in-container HTTP watchdog.
+- SIP, the Z39.50 responder and the Elasticsearch indexer when those features
+  are enabled for the Koha instance.
 
 `tini` is PID 1. A small runtime supervisor handles SIGTERM/SIGINT and performs
-an ordered shutdown of Apache, cron, the workers, indexer, Zebra and Plack.
+an ordered shutdown of Apache, cron, the workers and Koha daemons.
 
 The following opt-out variables are available for unusual deployments:
 
@@ -40,16 +42,22 @@ which was missed while the container was stopped.
 
 ## Health checks and watchdog
 
-Docker HEALTHCHECK and the watchdog both exercise the real Koha application
-through Apache/Plack. Their HTTP requests use the configured virtual host but
-resolve it to `127.0.0.1`, and they keep separate cookie jars under `/run`.
+Docker HEALTHCHECK and the watchdog use the session-free `/healthz` endpoint on
+both Apache virtual hosts. The request exercises Apache, mod_proxy, the
+Plack/Starman Unix socket, a live Koha worker, `C4::Context` and a `SELECT 1`
+against MariaDB without entering Koha's normal session-handling path.
 
-The cookie jars are important: a stateless request to the Koha application root
-can create a new anonymous Koha session. Reusing cookies prevents monitoring
-from growing the `sessions` table indefinitely.
+A healthy endpoint returns HTTP 200 with `ok`. A database check failure returns
+HTTP 503 with `unhealthy`; the watchdog recognises that response as a
+MariaDB-only problem and does not repeatedly restart a healthy Plack process.
+Other transport, proxy or unexpected HTTP failures count as application-path
+failures and can trigger the normal consecutive-failure Plack restart policy.
 
-Only HTTP 2xx and 3xx responses count as healthy. Connection failures and 4xx/5xx
-responses fail the probe.
+`http-probe.sh` remains available as a deeper functional probe of the real OPAC
+or staff application root. It preserves a cookie jar so repeated deep probes
+reuse a Koha session rather than creating an unbounded stream of anonymous
+sessions. This is suitable for lower-frequency external monitoring when normal
+page rendering should also be tested.
 
 ## Persistent Docker state
 
