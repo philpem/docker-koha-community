@@ -1,9 +1,9 @@
 #!/bin/bash
 # Container runtime supervisor.
 #
-# tini is PID 1 and forwards signals to this process group. This wrapper keeps
-# the existing configuration entrypoint focused on Koha setup while providing
-# one place for graceful, ordered shutdown of the services it starts.
+# tini is PID 1 and reaps orphaned children. Docker termination signals reach
+# this supervisor, which keeps the existing configuration entrypoint focused on
+# Koha setup while providing one place for graceful, ordered shutdown.
 
 set -Eeuo pipefail
 
