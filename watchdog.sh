@@ -3,14 +3,9 @@
 #
 # Apache runs in the foreground and keeps the container alive even if the
 # Plack/Starman backend has crashed or wedged. When that happens Apache
-# returns 502/503/504 and Docker's restart policy does not help. This
-# script detects those situations via HTTP probes and restarts Plack
-# in place.
-#
-# Note: koha-plack / koha-zebra do not have a reliable --status
-# subcommand across versions, so we deliberately do not try to inspect
-# them directly. The HTTP probe is the signal that actually matters
-# for the user-facing 503.
+# returns an error while the container itself remains running. This script
+# detects those situations via the same cookie-preserving application probe
+# used by Docker HEALTHCHECK and restarts Plack in place.
 
 set -u
 
@@ -25,19 +20,11 @@ log() {
     echo "[watchdog $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
 }
 
-# Returns 0 if Apache responds with anything other than a proxy error,
-# 1 if we got 502/503/504 or no response at all.
 http_ok() {
     local port="$1"
-    local code
-    code=$(curl -fsS -o /dev/null -w '%{http_code}' \
-        --max-time "$WATCHDOG_HTTP_TIMEOUT" \
-        -L --max-redirs 3 \
-        "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
-    case "$code" in
-        000|502|503|504) return 1 ;;
-        *) return 0 ;;
-    esac
+    local cookie_jar="$2"
+    WATCHDOG_HTTP_TIMEOUT="$WATCHDOG_HTTP_TIMEOUT" \
+        /docker/http-probe.sh "$port" "$cookie_jar"
 }
 
 restart_plack() {
@@ -58,7 +45,7 @@ while true; do
 
     restarted=0
 
-    if http_ok "$OPACPORT"; then
+    if http_ok "$OPACPORT" /run/koha-health/watchdog-opac.cookies; then
         opac_failures=0
     else
         opac_failures=$((opac_failures + 1))
@@ -72,7 +59,7 @@ while true; do
     fi
 
     if [ "$restarted" = 0 ]; then
-        if http_ok "$INTRAPORT"; then
+        if http_ok "$INTRAPORT" /run/koha-health/watchdog-intranet.cookies; then
             intra_failures=0
         else
             intra_failures=$((intra_failures + 1))
