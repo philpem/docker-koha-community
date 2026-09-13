@@ -1,9 +1,10 @@
 #!/bin/bash
-# Shared HTTP probe for Docker HEALTHCHECK and the in-container watchdog.
+# Deep Koha application probe.
 #
-# Probe the real Koha virtual host through Apache/Plack, but keep a cookie jar
-# so repeated monitoring requests do not create a fresh anonymous Koha session
-# every time. Only successful/redirect HTTP responses count as healthy.
+# This intentionally requests the real OPAC/staff application root and keeps a
+# cookie jar so repeated probes reuse a Koha session. Normal container health
+# and watchdog checks use /healthz instead; this script remains available for
+# less-frequent functional checks which exercise normal Koha request handling.
 
 set -u
 
