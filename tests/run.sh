@@ -10,6 +10,7 @@ scripts=(
     state.sh
     watchdog.sh
     healthcheck.sh
+    healthz-probe.sh
     http-probe.sh
     tests/test-state.sh
     tests/test-http-probe.sh
