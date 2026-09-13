@@ -29,6 +29,12 @@ stop_koha_services() {
         koha-worker --stop --queue default "$LIBRARY_NAME" 2>/dev/null || true
     fi
 
+    # These commands are harmless when the corresponding optional feature is
+    # disabled, and keep shutdown symmetric with koha-common's init semantics.
+    koha-es-indexer --stop --quiet "$LIBRARY_NAME" 2>/dev/null || true
+    koha-z3950-responder --stop --quiet "$LIBRARY_NAME" 2>/dev/null || true
+    koha-sip --stop "$LIBRARY_NAME" 2>/dev/null || true
+
     koha-indexer --stop "$LIBRARY_NAME" 2>/dev/null || true
     koha-zebra --stop "$LIBRARY_NAME" 2>/dev/null || true
     koha-plack --stop "$LIBRARY_NAME" 2>/dev/null || true

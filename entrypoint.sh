@@ -233,6 +233,30 @@ start_workers() {
     fi
 }
 
+instance_feature_enabled() {
+    local feature="$1"
+    koha-list --enabled "--${feature}" | grep -Fxq "$LIBRARY_NAME"
+}
+
+start_optional_services() {
+    # Mirror the optional services started by the koha-common init script, but
+    # only when the instance has explicitly enabled the corresponding feature.
+    if instance_feature_enabled sip; then
+        echo "*** Starting SIP server..."
+        koha-sip --start "$LIBRARY_NAME"
+    fi
+
+    if instance_feature_enabled z3950; then
+        echo "*** Starting Z39.50 responder..."
+        koha-z3950-responder --start --quiet "$LIBRARY_NAME"
+    fi
+
+    if instance_feature_enabled elasticsearch; then
+        echo "*** Starting Elasticsearch indexer..."
+        koha-es-indexer --start --quiet "$LIBRARY_NAME"
+    fi
+}
+
 start_scheduler() {
     if [ "${KOHA_CRON_ENABLED:-yes}" = "yes" ]; then
         echo "*** Starting cron for packaged Koha maintenance jobs..."
@@ -262,6 +286,8 @@ print_startup_summary() {
 }
 
 start_koha() {
+    echo "*** Ensuring Koha runtime directories exist..."
+    koha-create-dirs "$LIBRARY_NAME"
     echo "*** Starting koha with plack..."
     koha-plack --start $LIBRARY_NAME
     # koha-create (run by reconnect_db) already starts the indexer, so use
@@ -271,6 +297,7 @@ start_koha() {
     koha-indexer --restart $LIBRARY_NAME
     echo "*** Starting zebra..."
     koha-zebra --start $LIBRARY_NAME
+    start_optional_services
     start_workers
     start_scheduler
     start_watchdog
