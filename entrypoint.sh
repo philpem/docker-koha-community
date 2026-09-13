@@ -83,7 +83,7 @@ update_apache2_conf () {
         # Intra => https://library.admin.example.com
 
         envsubst < /docker/templates/koha.conf > /etc/apache2/sites-available/${LIBRARY_NAME}.conf
-    else 
+    else
         # TODO1: understand why whith this new version the automatic generation of config file looks like not working, even thouth 'INTRAPORT' variable is good
         # TODO2: remove hardvoded values of 'templates/koha.conf' and unify it with 'templates/koha-no-domain.conf'
         envsubst < /docker/templates/koha-no-domain.conf > /etc/apache2/sites-available/${LIBRARY_NAME}.conf
@@ -145,6 +145,31 @@ start_watchdog() {
     fi
 }
 
+start_workers() {
+    if [ "${KOHA_WORKERS_ENABLED:-yes}" = "yes" ]; then
+        echo "*** Starting Koha background workers..."
+        # Use explicit queues for compatibility with Koha versions predating
+        # koha-worker --all-queues.
+        koha-worker --restart --queue default "$LIBRARY_NAME"
+        koha-worker --restart --queue long_tasks "$LIBRARY_NAME"
+    else
+        echo "*** Koha background workers disabled via KOHA_WORKERS_ENABLED"
+    fi
+}
+
+start_scheduler() {
+    if [ "${KOHA_CRON_ENABLED:-yes}" = "yes" ]; then
+        echo "*** Starting cron for packaged Koha maintenance jobs..."
+        cron
+        # Cron runs future jobs. anacron catches up daily/weekly/monthly jobs
+        # that were missed while the container was stopped.
+        echo "*** Starting anacron catch-up..."
+        anacron -s &
+    else
+        echo "*** Koha scheduler disabled via KOHA_CRON_ENABLED"
+    fi
+}
+
 start_koha() {
     echo "*** Starting koha with plack..."
     koha-plack --start $LIBRARY_NAME
@@ -155,6 +180,8 @@ start_koha() {
     koha-indexer --restart $LIBRARY_NAME
     echo "*** Starting zebra..."
     koha-zebra --start $LIBRARY_NAME
+    start_workers
+    start_scheduler
     start_watchdog
     echo "*** Starting apache in foreground..."
     apachectl -D FOREGROUND
