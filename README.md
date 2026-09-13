@@ -154,7 +154,7 @@ To get a full list of available translations:
 
 1. Start the koha docker container
 
-2. Connect to it (in this example the docker koha container is named "koha")
+2. Connect to it (in this example the koha docker container is named "koha")
 
 ```
 docker exec -ti koha bash
@@ -428,19 +428,22 @@ container running while Apache returns an error to users.
 
 To detect and recover the user-facing failure mode:
 
-* `/docker/watchdog.sh` runs in the background. Every `WATCHDOG_INTERVAL`
-  seconds it probes both the OPAC and staff application paths. It reuses
-  persistent cookie jars so monitoring does not create a new anonymous Koha
-  session on every request. After `WATCHDOG_HTTP_FAILURES` consecutive failures
-  it restarts Plack.
-* A Docker `HEALTHCHECK` probes the same application paths with its own cookie
-  jars so orchestrators can see persistent application failures. Combine it
-  with an external auto-heal tool (e.g. [willfarrell/autoheal](https://github.com/willfarrell/autoheal))
-  or Kubernetes liveness probes if you want the whole container to be recreated
-  when the watchdog can't recover on its own.
-* Zebra, the indexer and the background workers are started by the Koha package
-  management commands. The HTTP watchdog does not claim to monitor those
-  daemons individually.
+* `/docker/watchdog.sh` probes `/healthz` on both the OPAC and staff listeners.
+  `/healthz` exercises Apache, mod_proxy, a live Plack/Starman worker, Koha's
+  Perl/config environment and MariaDB without entering Koha's normal session
+  path. After `WATCHDOG_HTTP_FAILURES` consecutive application-path failures it
+  restarts Plack.
+* A database-only `/healthz` failure is distinguished from a broken proxy/Plack
+  path, so the watchdog does not repeatedly restart healthy Plack workers while
+  MariaDB is unavailable.
+* Docker `HEALTHCHECK` probes the same `/healthz` endpoints so orchestrators can
+  see persistent application failures without creating anonymous Koha sessions.
+* `/docker/http-probe.sh` remains available for a lower-frequency deep check of
+  the real OPAC/staff application root. It reuses a cookie jar to avoid creating
+  a fresh Koha session on each request.
+* Zebra, the indexer and background workers are started by the Koha package
+  management commands. Optional SIP, Z39.50 and Elasticsearch services are
+  started when enabled for the instance.
 
 Tunable environment variables:
 
