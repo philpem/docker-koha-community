@@ -5,7 +5,7 @@
 # This verifies Apache, proxying, a live Plack/Starman worker, Koha's Perl/config
 # environment and database connectivity without creating Koha sessions.
 
-set -u
+set -Eeuo pipefail
 
 OPACPORT="${OPACPORT:-80}"
 INTRAPORT="${INTRAPORT:-8080}"
