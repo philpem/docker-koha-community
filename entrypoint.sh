@@ -212,6 +212,16 @@ enable_plack () {
     koha-plack --enable ${LIBRARY_NAME}
 }
 
+install_plack_health () {
+    echo "*** Installing Plack health-check wrapper..."
+    install \
+        -o "${LIBRARY_NAME}-koha" \
+        -g "${LIBRARY_NAME}-koha" \
+        -m 0644 \
+        /docker/plack-health.psgi \
+        "/etc/koha/sites/${LIBRARY_NAME}/plack.psgi"
+}
+
 start_watchdog() {
     if [ "${WATCHDOG_ENABLED:-yes}" = "yes" ]; then
         echo "*** Starting watchdog..."
@@ -332,6 +342,7 @@ else
 fi
 
 enable_plack
+install_plack_health
 update_apache2_conf
 
 # koha-create starts apache as a side effect; stop it so we can
