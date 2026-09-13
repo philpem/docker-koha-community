@@ -1,4 +1,30 @@
 #!/bin/bash
+set -Eeuo pipefail
+
+load_secret() {
+    local name="$1"
+    local file_name="${name}_FILE"
+    local value="${!name-}"
+    local file_value="${!file_name-}"
+
+    if [ -n "$value" ] && [ -n "$file_value" ]; then
+        echo "ERROR: set either $name or $file_name, not both" >&2
+        exit 1
+    fi
+    if [ -n "$file_value" ]; then
+        if [ ! -r "$file_value" ]; then
+            echo "ERROR: cannot read $file_name path: $file_value" >&2
+            exit 1
+        fi
+        printf -v "$name" '%s' "$(cat "$file_value")"
+        export "$name"
+    fi
+}
+
+load_secret DB_ROOT_PASSWORD
+: "${DB_HOST:?DB_HOST must be set}"
+: "${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD or DB_ROOT_PASSWORD_FILE must be set}"
+export DB_HOST DB_ROOT_PASSWORD
 
 # Default values for environment variables
 export DB_PORT="${DB_PORT:-3306}"
@@ -7,14 +33,18 @@ export INTRAPORT="${INTRAPORT:-8080}"
 export INTRAPREFIX="${INTRAPREFIX:-}"
 export INTRASUFFIX="${INTRASUFFIX:-}"
 export LIBRARY_NAME="${LIBRARY_NAME:-defaultlibraryname}"
-export MEMCACHED_PREFIX=${MEMCACHED_PREFIX:-koha_}
-export MEMCACHED_SERVERS=${MEMCACHED_SERVERS:-memcached:11211}
+export MEMCACHED_PREFIX="${MEMCACHED_PREFIX:-koha_}"
+export MEMCACHED_SERVERS="${MEMCACHED_SERVERS:-memcached:11211}"
 export OPACPORT="${OPACPORT:-80}"
 export OPACPREFIX="${OPACPREFIX:-}"
 export OPACSUFFIX="${OPACSUFFIX:-}"
 export SLEEP="${SLEEP:-3}"
-export USE_MEMCACHED=${USE_MEMCACHED:-yes}
-export ZEBRA_MARC_FORMAT=${ZEBRA_MARC_FORMAT:-marc21}
+export USE_MEMCACHED="${USE_MEMCACHED:-yes}"
+export ZEBRA_MARC_FORMAT="${ZEBRA_MARC_FORMAT:-marc21}"
+export ZEBRA_LANGUAGE="${ZEBRA_LANGUAGE:-en}"
+export BIBLIOS_INDEXING_MODE="${BIBLIOS_INDEXING_MODE:-dom}"
+export AUTHORITIES_INDEXING_MODE="${AUTHORITIES_INDEXING_MODE:-dom}"
+export KOHA_TRANSLATE_LANGUAGES="${KOHA_TRANSLATE_LANGUAGES:-}"
 
 # Persistent-layout migrations and Koha package-version tracking.
 . /docker/state.sh
@@ -29,24 +59,39 @@ update_httpd_listening_ports () {
     if [ "80" != "$INTRAPORT" ]; then
         grep -q "Listen $INTRAPORT" /etc/apache2/ports.conf || echo "Listen $INTRAPORT" >> /etc/apache2/ports.conf
     fi
-    if [ "80" != "$OPACPORT" ] && [ $INTRAPORT != $OPACPORT ]; then
+    if [ "80" != "$OPACPORT" ] && [ "$INTRAPORT" != "$OPACPORT" ]; then
         grep -q "Listen $OPACPORT" /etc/apache2/ports.conf || echo "Listen $OPACPORT" >> /etc/apache2/ports.conf
     fi
 }
 
 update_koha_database_conf () {
     echo "*** Modifying /etc/mysql/koha-common.cnf"
+    local old_umask
+    old_umask=$(umask)
+    umask 077
     envsubst < /docker/templates/koha-common.cnf > /etc/mysql/koha-common.cnf
+    umask "$old_umask"
+    chmod 600 /etc/mysql/koha-common.cnf
+}
+
+mysql_root() {
+    mysql --defaults-extra-file=/etc/mysql/koha-common.cnf "$@"
+}
+
+mysqladmin_root() {
+    mysqladmin --defaults-extra-file=/etc/mysql/koha-common.cnf "$@"
 }
 
 fix_database_permissions () {
+    local user="koha_${LIBRARY_NAME}"
+    local database="koha_${LIBRARY_NAME}"
+
     echo "*** Fixing database permissions to be able to use an external server"
     # TODO: restrict to the docker container private IP
     # TODO: investigate how to change hardcoded 'koha_' preffix in database name and username creatingg '/etc/koha/sites/${LIBRARY_NAME}/koha-conf.xml.in'
-    # TODO: replace direct privilege-table manipulation with supported account DDL
-    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "update mysql.user set Host='%' where Host='localhost' and User='koha_$LIBRARY_NAME';"
-    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "flush privileges;"
-    mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "grant all on koha_$LIBRARY_NAME.* to 'koha_$LIBRARY_NAME'@'%';"
+    # koha-create creates the account for localhost. RENAME USER preserves its
+    # generated credentials without editing MariaDB's internal privilege tables.
+    mysql_root -e "RENAME USER '${user}'@'localhost' TO '${user}'@'%'; GRANT ALL PRIVILEGES ON \`${database}\`.* TO '${user}'@'%';"
 }
 
 log_database_credentials () {
@@ -58,22 +103,23 @@ log_database_credentials () {
 }
 
 install_koha_translate_languages () {
+    local -a languages
+
+    if [ -z "$KOHA_TRANSLATE_LANGUAGES" ]; then
+        return 0
+    fi
+
     echo "*** Installing koha translate languages defined by KOHA_TRANSLATE_LANGUAGES"
-    IFS=',' read -ra LIST <<< "$KOHA_TRANSLATE_LANGUAGES"
-    for i in "${LIST[@]}"; do
-        koha-translate --install $i
+    IFS=',' read -r -a languages <<< "$KOHA_TRANSLATE_LANGUAGES"
+    for language in "${languages[@]}"; do
+        koha-translate --install "$language"
     done
 }
 
 is_exists_db () {
     # TODO: fix hardcoded database name
-    is_exists_db=`mysql -h $DB_HOST -u root -p$DB_ROOT_PASSWORD -e "show databases like 'koha_$LIBRARY_NAME';"`
-    if [ -z "$is_exists_db" ]
-    then
-        return 1
-    else
-        return 0
-    fi
+    local database="koha_${LIBRARY_NAME}"
+    [ "$(mysql_root -Nse "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='${database}'")" -gt 0 ]
 }
 
 update_apache2_conf () {
@@ -96,10 +142,15 @@ update_apache2_conf () {
 }
 
 reconnect_db () {
-    PASSWD_FILE=$(mktemp)
-    echo "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$PASSWD_FILE"
-    koha-create --use-db $LIBRARY_NAME --passwdfile "$PASSWD_FILE"
-    rm -f "$PASSWD_FILE"
+    local passwd_file
+    passwd_file=$(mktemp)
+    chmod 600 "$passwd_file"
+    printf '%s\n' "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$passwd_file"
+    if ! koha-create --use-db "$LIBRARY_NAME" --passwdfile "$passwd_file"; then
+        rm -f "$passwd_file"
+        return 1
+    fi
+    rm -f "$passwd_file"
 }
 
 upgrade_schema () {
@@ -137,9 +188,9 @@ upgrade_schema () {
 
 create_db () {
     echo "*** Creating database..."
-    while ! mysqladmin ping -h"$DB_HOST" -u"root" -p"$DB_ROOT_PASSWORD" --silent; do
+    while ! mysqladmin_root ping --silent; do
         echo "*** Database server still down. Waiting $SLEEP seconds until retry"
-        sleep $SLEEP
+        sleep "$SLEEP"
     done
     if is_exists_db
     then
@@ -147,10 +198,10 @@ create_db () {
         reconnect_db
         # Needed because 'koha-create' restarts apache and puts process in background"
         echo "*** Manual indexing is needed..."
-        koha-rebuild-zebra -v --full $(/usr/sbin/koha-list)
+        koha-rebuild-zebra -v --full "$LIBRARY_NAME"
     else
         echo "*** koha-create with db"
-        koha-create --create-db $LIBRARY_NAME
+        koha-create --create-db "$LIBRARY_NAME"
         # Needed because 'koha-create' restarts apache and puts process in background"
         fix_database_permissions
     fi
@@ -195,6 +246,21 @@ start_scheduler() {
     fi
 }
 
+print_startup_summary() {
+    echo "===================================================="
+    echo "Koha container startup"
+    echo "  instance:       $LIBRARY_NAME"
+    echo "  Koha package:   $(current_koha_package_version)"
+    echo "  state schema:   $(cat "$DOCKER_STATE_VERSION_FILE")"
+    echo "  database:       ${DB_HOST}:${DB_PORT}"
+    echo "  memcached:      $MEMCACHED_SERVERS"
+    echo "  cron/anacron:   ${KOHA_CRON_ENABLED:-yes}"
+    echo "  workers:        ${KOHA_WORKERS_ENABLED:-yes}"
+    echo "  watchdog:       ${WATCHDOG_ENABLED:-yes}"
+    echo "  backup path:    $DOCKER_BACKUP_DIR"
+    echo "===================================================="
+}
+
 start_koha() {
     echo "*** Starting koha with plack..."
     koha-plack --start $LIBRARY_NAME
@@ -221,6 +287,7 @@ update_httpd_listening_ports
 if ! migrate_persistent_state; then
     exit 1
 fi
+print_startup_summary
 
 # 1st docker container execution
 if [ ! -f /var/lib/koha/${LIBRARY_NAME}/configured ]; then
@@ -229,17 +296,12 @@ if [ ! -f /var/lib/koha/${LIBRARY_NAME}/configured ]; then
     install_koha_translate_languages
     log_database_credentials
     date > /var/lib/koha/${LIBRARY_NAME}/configured
-    if ! record_koha_package_version; then
-        echo "ERROR: failed to record Koha package version" >&2
-        exit 1
-    fi
+    record_koha_package_version
 else
     # 2nd+ executions
     echo "*** Already configured, reconnecting to database..."
     reconnect_db
-    if ! upgrade_schema; then
-        exit 1
-    fi
+    upgrade_schema
 fi
 
 enable_plack

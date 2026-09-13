@@ -4,12 +4,16 @@
 # User-facing Koha configuration remains environment-variable based. This file
 # versions only the image's own persistent layout under /var/lib/koha so future
 # migrations can be explicit and atomic.
+# The *_DIR overrides exist primarily for regression tests; production defaults
+# remain /var/lib/koha and /var/spool/koha.
 
 DOCKER_STATE_SCHEMA=2
-DOCKER_STATE_DIR=/var/lib/koha/.docker-state
+DOCKER_KOHA_DATA_DIR="${DOCKER_KOHA_DATA_DIR:-/var/lib/koha}"
+DOCKER_KOHA_SPOOL_DIR="${DOCKER_KOHA_SPOOL_DIR:-/var/spool/koha}"
+DOCKER_STATE_DIR="$DOCKER_KOHA_DATA_DIR/.docker-state"
 DOCKER_STATE_VERSION_FILE="$DOCKER_STATE_DIR/version"
 DOCKER_KOHA_VERSION_FILE="$DOCKER_STATE_DIR/koha-package-version"
-DOCKER_BACKUP_DIR=/var/lib/koha/backups
+DOCKER_BACKUP_DIR="$DOCKER_KOHA_DATA_DIR/backups"
 
 atomic_write() {
     local destination="$1"
@@ -23,21 +27,29 @@ atomic_write() {
 }
 
 prepare_backup_layout() {
+    local current_target=""
+
     mkdir -p "$DOCKER_BACKUP_DIR/$LIBRARY_NAME"
+    mkdir -p "$(dirname "$DOCKER_KOHA_SPOOL_DIR")"
 
     # koha-dump and koha-run-backups use /var/spool/koha by default. Point
     # that package-standard path into the already-persistent /var/lib/koha
     # volume. Preserve anything an older image may have left in the image-local
-    # spool before replacing it.
-    if [ ! -L /var/spool/koha ]; then
-        if [ -d /var/spool/koha ]; then
-            cp -an /var/spool/koha/. "$DOCKER_BACKUP_DIR/" 2>/dev/null || true
-            rm -rf /var/spool/koha
-        elif [ -e /var/spool/koha ]; then
-            rm -f /var/spool/koha
+    # spool before replacing it. The path variables are overridable for tests.
+    if [ -L "$DOCKER_KOHA_SPOOL_DIR" ]; then
+        current_target=$(readlink "$DOCKER_KOHA_SPOOL_DIR")
+        if [ "$current_target" = "$DOCKER_BACKUP_DIR" ]; then
+            return 0
         fi
-        ln -s "$DOCKER_BACKUP_DIR" /var/spool/koha
+        rm -f "$DOCKER_KOHA_SPOOL_DIR"
+    elif [ -d "$DOCKER_KOHA_SPOOL_DIR" ]; then
+        cp -an "$DOCKER_KOHA_SPOOL_DIR"/. "$DOCKER_BACKUP_DIR/" 2>/dev/null || true
+        rm -rf "$DOCKER_KOHA_SPOOL_DIR"
+    elif [ -e "$DOCKER_KOHA_SPOOL_DIR" ]; then
+        rm -f "$DOCKER_KOHA_SPOOL_DIR"
     fi
+
+    ln -s "$DOCKER_BACKUP_DIR" "$DOCKER_KOHA_SPOOL_DIR"
 }
 
 migrate_persistent_state() {
@@ -47,7 +59,7 @@ migrate_persistent_state() {
 
     if [ -f "$DOCKER_STATE_VERSION_FILE" ]; then
         version=$(cat "$DOCKER_STATE_VERSION_FILE")
-    elif [ -f "/var/lib/koha/${LIBRARY_NAME}/configured" ]; then
+    elif [ -f "$DOCKER_KOHA_DATA_DIR/${LIBRARY_NAME}/configured" ]; then
         # Legacy images persisted only the per-instance 'configured' marker.
         version=1
     else
@@ -56,21 +68,28 @@ migrate_persistent_state() {
     fi
 
     case "$version" in
+        ''|*[!0-9]*)
+            echo "ERROR: invalid persistent state schema '$version'" >&2
+            return 1
+            ;;
+    esac
+
+    if [ "$version" -gt "$DOCKER_STATE_SCHEMA" ]; then
+        echo "ERROR: persistent state schema $version is newer than this image supports ($DOCKER_STATE_SCHEMA)" >&2
+        return 1
+    fi
+
+    case "$version" in
         1)
             echo "*** Migrating Docker persistent state v1 -> v2"
             prepare_backup_layout
             atomic_write "$DOCKER_STATE_VERSION_FILE" 2
-            version=2
             ;;
         2)
             prepare_backup_layout
             ;;
         *)
-            if [ "$version" -gt "$DOCKER_STATE_SCHEMA" ] 2>/dev/null; then
-                echo "ERROR: persistent state schema $version is newer than this image supports ($DOCKER_STATE_SCHEMA)" >&2
-            else
-                echo "ERROR: unsupported persistent state schema '$version'" >&2
-            fi
+            echo "ERROR: unsupported persistent state schema '$version'" >&2
             return 1
             ;;
     esac

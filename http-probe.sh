@@ -5,7 +5,7 @@
 # so repeated monitoring requests do not create a fresh anonymous Koha session
 # every time. Only successful/redirect HTTP responses count as healthy.
 
-set -u
+set -Eeuo pipefail
 
 port="${1:?usage: http-probe.sh PORT COOKIE_JAR}"
 cookie_jar="${2:?usage: http-probe.sh PORT COOKIE_JAR}"

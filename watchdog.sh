@@ -7,7 +7,7 @@
 # detects those situations via the same cookie-preserving application probe
 # used by Docker HEALTHCHECK and restarts Plack in place.
 
-set -u
+set -Eeuo pipefail
 
 LIBRARY_NAME="${LIBRARY_NAME:-defaultlibraryname}"
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
