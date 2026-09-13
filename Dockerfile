@@ -56,6 +56,7 @@ COPY runtime.sh /docker/
 COPY watchdog.sh /docker/
 COPY healthcheck.sh /docker/
 COPY http-probe.sh /docker/
+COPY plack-health.psgi /docker/
 
 COPY templates /docker/templates
 
