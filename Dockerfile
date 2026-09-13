@@ -55,12 +55,13 @@ COPY entrypoint.sh /docker/
 COPY runtime.sh /docker/
 COPY watchdog.sh /docker/
 COPY healthcheck.sh /docker/
+COPY healthz-probe.sh /docker/
 COPY http-probe.sh /docker/
 COPY plack-health.psgi /docker/
 
 COPY templates /docker/templates
 
-RUN chmod +x /docker/entrypoint.sh /docker/runtime.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/http-probe.sh
+RUN chmod +x /docker/entrypoint.sh /docker/runtime.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/healthz-probe.sh /docker/http-probe.sh
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5m --retries=3 \
   CMD /docker/healthcheck.sh
