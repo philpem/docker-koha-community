@@ -16,6 +16,9 @@ export SLEEP="${SLEEP:-3}"
 export USE_MEMCACHED=${USE_MEMCACHED:-yes}
 export ZEBRA_MARC_FORMAT=${ZEBRA_MARC_FORMAT:-marc21}
 
+# Persistent-layout migrations and Koha package-version tracking.
+. /docker/state.sh
+
 update_koha_sites () {
     echo "*** Modifying /etc/koha/koha-sites.conf"
     envsubst < /docker/templates/koha-sites.conf > /etc/koha/koha-sites.conf
@@ -40,6 +43,7 @@ fix_database_permissions () {
     echo "*** Fixing database permissions to be able to use an external server"
     # TODO: restrict to the docker container private IP
     # TODO: investigate how to change hardcoded 'koha_' preffix in database name and username creatingg '/etc/koha/sites/${LIBRARY_NAME}/koha-conf.xml.in'
+    # TODO: replace direct privilege-table manipulation with supported account DDL
     mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "update mysql.user set Host='%' where Host='localhost' and User='koha_$LIBRARY_NAME';"
     mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "flush privileges;"
     mysql -h $DB_HOST -u root -p${DB_ROOT_PASSWORD} -e "grant all on koha_$LIBRARY_NAME.* to 'koha_$LIBRARY_NAME'@'%';"
@@ -103,11 +107,32 @@ upgrade_schema () {
     # no-op. When it doesn't (e.g. after a Koha image upgrade) it applies the
     # pending migrations so Plack workers can start cleanly instead of leaving
     # Apache returning 503 until somebody completes the web upgrade flow.
-    if [ "${KOHA_AUTO_UPGRADE_SCHEMA:-yes}" = "yes" ]; then
-        echo "*** Running koha-upgrade-schema (no-op if already current)..."
-        koha-upgrade-schema "$LIBRARY_NAME" || \
-            echo "*** WARNING: koha-upgrade-schema exited non-zero; continuing"
+    local previous current
+    previous=$(previous_koha_package_version)
+    current=$(current_koha_package_version)
+
+    if [ "${KOHA_AUTO_UPGRADE_SCHEMA:-yes}" != "yes" ]; then
+        echo "*** Automatic schema upgrade disabled via KOHA_AUTO_UPGRADE_SCHEMA"
+        if [ "$previous" != "$current" ]; then
+            echo "*** WARNING: Koha package changed ${previous} -> ${current}; package version will not be recorded until schema upgrade succeeds"
+        fi
+        return 0
     fi
+
+    if [ "$previous" != "$current" ]; then
+        if ! pre_upgrade_backup "$previous" "$current"; then
+            echo "ERROR: pre-upgrade Koha backup failed; refusing to migrate schema" >&2
+            return 1
+        fi
+    fi
+
+    echo "*** Running koha-upgrade-schema (no-op if already current)..."
+    if ! koha-upgrade-schema "$LIBRARY_NAME"; then
+        echo "ERROR: koha-upgrade-schema failed; refusing to start Koha" >&2
+        return 1
+    fi
+
+    record_koha_package_version
 }
 
 create_db () {
@@ -191,6 +216,12 @@ update_koha_database_conf
 update_koha_sites
 update_httpd_listening_ports
 
+# Migrate image-owned persistent layout before using it. Existing installations
+# without a state marker are recognised as legacy v1 and migrated in place.
+if ! migrate_persistent_state; then
+    exit 1
+fi
+
 # 1st docker container execution
 if [ ! -f /var/lib/koha/${LIBRARY_NAME}/configured ]; then
     echo "*** Running first time configuration..."
@@ -198,11 +229,17 @@ if [ ! -f /var/lib/koha/${LIBRARY_NAME}/configured ]; then
     install_koha_translate_languages
     log_database_credentials
     date > /var/lib/koha/${LIBRARY_NAME}/configured
+    if ! record_koha_package_version; then
+        echo "ERROR: failed to record Koha package version" >&2
+        exit 1
+    fi
 else
     # 2nd+ executions
     echo "*** Already configured, reconnecting to database..."
     reconnect_db
-    upgrade_schema
+    if ! upgrade_schema; then
+        exit 1
+    fi
 fi
 
 enable_plack
