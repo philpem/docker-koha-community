@@ -52,16 +52,17 @@ RUN a2enmod rewrite \
 RUN mkdir /docker
 
 COPY entrypoint.sh /docker/
+COPY runtime.sh /docker/
 COPY watchdog.sh /docker/
 COPY healthcheck.sh /docker/
 COPY http-probe.sh /docker/
 
 COPY templates /docker/templates
 
-RUN chmod +x /docker/entrypoint.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/http-probe.sh
+RUN chmod +x /docker/entrypoint.sh /docker/runtime.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/http-probe.sh
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5m --retries=3 \
   CMD /docker/healthcheck.sh
 
-# Forward signals to the whole service process group and reap orphaned children.
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/docker/entrypoint.sh"]
+# Forward signals to the service process group and reap orphaned children.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/docker/runtime.sh"]
