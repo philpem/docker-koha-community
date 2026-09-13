@@ -55,10 +55,11 @@ RUN mkdir /docker
 COPY entrypoint.sh /docker/
 COPY watchdog.sh /docker/
 COPY healthcheck.sh /docker/
+COPY http-probe.sh /docker/
 
 COPY templates /docker/templates
 
-RUN chmod +x /docker/entrypoint.sh /docker/watchdog.sh /docker/healthcheck.sh
+RUN chmod +x /docker/entrypoint.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/http-probe.sh
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5m --retries=3 \
   CMD /docker/healthcheck.sh

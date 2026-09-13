@@ -1,30 +1,15 @@
 #!/bin/bash
 # Docker HEALTHCHECK probe for Koha.
 #
-# Returns 0 (healthy) when both the OPAC and the staff intranet respond with
-# a non-error HTTP status. 502/503/504 (or no response) mean Apache could not
-# reach Plack — the watchdog will normally recover from this, but Docker
-# can also use the unhealthy status to restart the container if it persists.
+# Exercise both the OPAC and staff intranet through Apache/Plack. The shared
+# probe keeps cookies between checks so monitoring does not create an unbounded
+# stream of anonymous Koha sessions.
 
 set -u
 
 OPACPORT="${OPACPORT:-80}"
 INTRAPORT="${INTRAPORT:-8080}"
-HEALTHCHECK_TIMEOUT="${HEALTHCHECK_TIMEOUT:-10}"
 
-probe() {
-    local port="$1"
-    local code
-    code=$(curl -fsS -o /dev/null -w '%{http_code}' \
-        --max-time "$HEALTHCHECK_TIMEOUT" \
-        -L --max-redirs 3 \
-        "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
-    case "$code" in
-        000|502|503|504) return 1 ;;
-        *) return 0 ;;
-    esac
-}
-
-probe "$OPACPORT" || exit 1
-probe "$INTRAPORT" || exit 1
+/docker/http-probe.sh "$OPACPORT" /run/koha-health/docker-opac.cookies || exit 1
+/docker/http-probe.sh "$INTRAPORT" /run/koha-health/docker-intranet.cookies || exit 1
 exit 0
