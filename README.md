@@ -8,11 +8,18 @@ This is an updated version of [Kedu SCCL's original version](https://github.com/
   - Add volumes to the compose script so data is stored outside of the containers.
   - Put the intranet and OPAC on different ports.
   - Fix population of the database when it's completely empty.
-  - Auto-recovery: an in-container watchdog restarts Plack/Zebra/the indexer
-    if they crash or get wedged, and a Docker `HEALTHCHECK` reports the
-    container as unhealthy when the OPAC or staff intranet returns 502/503.
+  - Auto-recovery: an in-container watchdog checks the OPAC and staff application
+    paths and restarts Plack after persistent HTTP failures; Docker `HEALTHCHECK`
+    reports persistent application failures to the container runtime.
+  - Run the periodic maintenance and background workers expected by the
+    `koha-common` Debian package inside the container.
+  - Version the image-owned persistent state and take a Koha backup before an
+    automatic schema migration when the installed Koha package changes.
 
 This can be used standalone to try out Koha, but if you want to deploy this you'll probably want to customise the `docker-compose.yml`.
+
+See [RUNTIME.md](RUNTIME.md) for details of runtime services, scheduled maintenance,
+health checks, persistent-state migration, backups and upgrade behaviour.
 
 
 # Original documentation
@@ -22,6 +29,7 @@ This can be used standalone to try out Koha, but if you want to deploy this you'
 - [Environment Variables](#environment-variables)
   - [DB_HOST](#DB_HOST)
   - [DB_ROOT_PASSWORD](#DB_ROOT_PASSWORD)
+  - [DB_ROOT_PASSWORD_FILE](#DB_ROOT_PASSWORD_FILE)
   - [DB_PORT](#DB_PORT)
   - [KOHA_TRANSLATE_LANGUAGES](#KOHA_TRANSLATE_LANGUAGES)
   - [LIBRARY_NAME](#LIBRARY_NAME)
@@ -103,12 +111,25 @@ Example:
 
 ## DB_ROOT_PASSWORD
 
-Mandatory. Password of "root" account of "DB_HOST" database server.
+Password of the "root" account of "DB_HOST" database server. Mandatory unless
+`DB_ROOT_PASSWORD_FILE` is used.
 
 Example:
 
 ```
 -e DB_ROOT_PASSWORD=secretpassword
+```
+
+## DB_ROOT_PASSWORD_FILE
+
+Optional alternative to `DB_ROOT_PASSWORD`. Set this to the path of a mounted
+Docker secret or other file containing the database root password. Do not set
+both variables.
+
+Example:
+
+```
+-e DB_ROOT_PASSWORD_FILE=/run/secrets/koha_db_root_password
 ```
 
 ## DB_PORT
@@ -402,44 +423,50 @@ Example:
 # Auto-recovery
 
 Apache runs in the foreground inside the container, but it depends on
-several background services (Plack/Starman, Zebra, the indexer). If one
-of those crashes the container stays "up" — Apache just starts returning
-HTTP 503 to the user.
+background Koha services. A failed Plack/Starman backend can leave the
+container running while Apache returns an error to users.
 
-To recover automatically:
+To detect and recover the user-facing failure mode:
 
 * `/docker/watchdog.sh` runs in the background. Every `WATCHDOG_INTERVAL`
-  seconds it checks `koha-plack`, `koha-zebra` and `koha-indexer` and
-  restarts any that aren't running. It also makes an HTTP request to the
-  OPAC and intranet ports; if it gets 502/503/504 (or no response) for
-  `WATCHDOG_HTTP_FAILURES` consecutive checks it restarts Plack.
-* A Docker `HEALTHCHECK` probes the same ports so orchestrators can see
-  when the container is unhealthy. Combine it with an external auto-heal
-  tool (e.g. [willfarrell/autoheal](https://github.com/willfarrell/autoheal))
-  or Kubernetes liveness probes if you want the whole container to be
-  recreated when the watchdog can't recover on its own.
+  seconds it probes both the OPAC and staff application paths. It reuses
+  persistent cookie jars so monitoring does not create a new anonymous Koha
+  session on every request. After `WATCHDOG_HTTP_FAILURES` consecutive failures
+  it restarts Plack.
+* A Docker `HEALTHCHECK` probes the same application paths with its own cookie
+  jars so orchestrators can see persistent application failures. Combine it
+  with an external auto-heal tool (e.g. [willfarrell/autoheal](https://github.com/willfarrell/autoheal))
+  or Kubernetes liveness probes if you want the whole container to be recreated
+  when the watchdog can't recover on its own.
+* Zebra, the indexer and the background workers are started by the Koha package
+  management commands. The HTTP watchdog does not claim to monitor those
+  daemons individually.
 
 Tunable environment variables:
 
-| Variable                  | Default | Description                                               |
-| ------------------------- | ------- | --------------------------------------------------------- |
-| `WATCHDOG_ENABLED`        | `yes`   | Set to anything else to disable the watchdog.             |
-| `WATCHDOG_INTERVAL`       | `30`    | Seconds between checks.                                   |
-| `WATCHDOG_HTTP_TIMEOUT`   | `10`    | Per-request timeout for HTTP probes.                      |
-| `WATCHDOG_HTTP_FAILURES`  | `2`     | Consecutive HTTP failures before Plack is restarted.      |
-| `HEALTHCHECK_TIMEOUT`     | `10`    | Per-request timeout for the Docker healthcheck.           |
-| `KOHA_AUTO_UPGRADE_SCHEMA`| `yes`   | Run `koha-upgrade-schema` on startup. No-op if up to date.|
+| Variable                  | Default | Description                                                        |
+| ------------------------- | ------- | ------------------------------------------------------------------ |
+| `WATCHDOG_ENABLED`        | `yes`   | Set to anything else to disable the watchdog.                      |
+| `WATCHDOG_INTERVAL`       | `30`    | Seconds between checks.                                            |
+| `WATCHDOG_HTTP_TIMEOUT`   | `10`    | Per-request timeout for HTTP probes.                               |
+| `WATCHDOG_HTTP_FAILURES`  | `2`     | Consecutive HTTP failures before Plack is restarted.               |
+| `HEALTHCHECK_TIMEOUT`     | `10`    | Per-request timeout for the Docker healthcheck.                    |
+| `KOHA_CRON_ENABLED`       | `yes`   | Run cron/anacron and the maintenance jobs shipped by `koha-common`.|
+| `KOHA_WORKERS_ENABLED`    | `yes`   | Run the `default` and `long_tasks` background workers.             |
+| `KOHA_AUTO_UPGRADE_SCHEMA`| `yes`   | Run `koha-upgrade-schema` on startup.                              |
+| `KOHA_PRE_UPGRADE_BACKUP` | `yes`   | Take a `koha-dump` before a detected Koha package-version change.  |
 
 After a Koha image upgrade the database schema can lag behind the code,
-which leaves Plack workers unable to start and Apache returning 503.
-`koha-upgrade-schema` runs automatically on every start (in the
-"already configured" path) so the migration happens before Plack comes
-up. It's idempotent — when the DB is already current it just logs that
-and exits.
+which leaves Plack workers unable to start and Apache returning errors.
+`koha-upgrade-schema` runs in the "already configured" startup path before
+Plack comes up. When the Koha package version changes, the image first takes a
+persistent Koha backup. A failed schema migration is fatal: the container does
+not start the new Koha code against a schema which failed to upgrade.
 
 # Allowed volumes
 
-We recommend to map "/var/lib/koha".
+We recommend to map "/var/lib/koha". The same volume also stores Docker state
+metadata and persistent Koha backups under `/var/lib/koha/backups`.
 
 Example:
 
