@@ -17,15 +17,14 @@ ARG PKG_URL=https://debian.koha-community.org/koha
 # Install Debian baseline packages.
 # Koha needs libgd-barcode-perl >= 2.01, which stable (Trixie) doesn't ship
 # (it has 2.00). Add unstable (sid) as a source, but pin it so ONLY
-# libgd-barcode-perl is taken from it: the general '*' rule at priority 100
-# keeps every other sid package below stable's default of 500, while the
-# targeted rule at 990 lifts libgd-barcode-perl above stable so its 2.01 is
-# preferred. anacron ensures daily Koha maintenance catches up after downtime.
+# libgd-barcode-perl is taken from it. anacron ensures daily Koha maintenance
+# catches up after downtime; tini provides a proper container init.
 RUN apt-get update && apt-get install -y \
   curl \
   wget \
   gnupg \
-  anacron && \
+  anacron \
+  tini && \
   echo "deb http://deb.debian.org/debian sid main" > /etc/apt/sources.list.d/sid.list && \
   printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n\nPackage: libgd-barcode-perl\nPin: release a=unstable\nPin-Priority: 990\n' > /etc/apt/preferences.d/99-sid && \
   apt-get update && \
@@ -53,15 +52,17 @@ RUN a2enmod rewrite \
 RUN mkdir /docker
 
 COPY entrypoint.sh /docker/
+COPY runtime.sh /docker/
 COPY watchdog.sh /docker/
 COPY healthcheck.sh /docker/
 COPY http-probe.sh /docker/
 
 COPY templates /docker/templates
 
-RUN chmod +x /docker/entrypoint.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/http-probe.sh
+RUN chmod +x /docker/entrypoint.sh /docker/runtime.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/http-probe.sh
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5m --retries=3 \
   CMD /docker/healthcheck.sh
 
-ENTRYPOINT ["/docker/entrypoint.sh"]
+# Forward signals to the service process group and reap orphaned children.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/docker/runtime.sh"]
