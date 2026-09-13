@@ -20,12 +20,12 @@ ARG PKG_URL=https://debian.koha-community.org/koha
 # libgd-barcode-perl is taken from it: the general '*' rule at priority 100
 # keeps every other sid package below stable's default of 500, while the
 # targeted rule at 990 lifts libgd-barcode-perl above stable so its 2.01 is
-# preferred. The module is Architecture: all and depends only on packages
-# already in stable, so nothing else upgrades from unstable.
+# preferred. anacron ensures daily Koha maintenance catches up after downtime.
 RUN apt-get update && apt-get install -y \
   curl \
   wget \
-  gnupg && \
+  gnupg \
+  anacron && \
   echo "deb http://deb.debian.org/debian sid main" > /etc/apt/sources.list.d/sid.list && \
   printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n\nPackage: libgd-barcode-perl\nPin: release a=unstable\nPin-Priority: 990\n' > /etc/apt/preferences.d/99-sid && \
   apt-get update && \
