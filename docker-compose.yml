@@ -32,7 +32,8 @@ services:
       MYSQL_ROOT_PASSWORD: secret
       MARIADB_AUTO_UPGRADE: true
     # Newer versions not working
-    image: mariadb:lts
+    # Pin the current LTS series so a normal pull cannot perform a major DB upgrade.
+    image: mariadb:12.3
     volumes:
       - ./koha-db-data:/var/lib/mysql:Z
 
