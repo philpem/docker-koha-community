@@ -11,7 +11,10 @@ LABEL maintainer="philpem@philpem.me.uk"
 ARG DEBIAN_FRONTEND=noninteractive
 
 # https://koha-community.org/
-ARG KOHA_VERSION=stable
+# Pin the supported Koha release series. Rebuilds still receive 26.05 point and
+# security updates, but a future movement of the repository's 'stable' alias
+# cannot silently perform a major Koha upgrade.
+ARG KOHA_VERSION=26.05
 ARG PKG_URL=https://debian.koha-community.org/koha
 
 # Install Debian baseline packages.
@@ -53,18 +56,18 @@ RUN mkdir /docker
 
 COPY entrypoint.sh /docker/
 COPY runtime.sh /docker/
+COPY state.sh /docker/
 COPY watchdog.sh /docker/
 COPY healthcheck.sh /docker/
-COPY healthz-probe.sh /docker/
 COPY http-probe.sh /docker/
-COPY plack-health.psgi /docker/
 
 COPY templates /docker/templates
 
-RUN chmod +x /docker/entrypoint.sh /docker/runtime.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/healthz-probe.sh /docker/http-probe.sh
+RUN chmod +x /docker/entrypoint.sh /docker/runtime.sh /docker/state.sh /docker/watchdog.sh /docker/healthcheck.sh /docker/http-probe.sh
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5m --retries=3 \
   CMD /docker/healthcheck.sh
 
-# Forward signals to the service process group and reap orphaned children.
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/docker/runtime.sh"]
+# tini remains PID 1 to reap orphaned children. The runtime supervisor receives
+# termination signals and performs the ordered service shutdown itself.
+ENTRYPOINT ["/usr/bin/tini", "--", "/docker/runtime.sh"]

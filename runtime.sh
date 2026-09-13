@@ -5,7 +5,7 @@
 # the existing configuration entrypoint focused on Koha setup while providing
 # one place for graceful, ordered shutdown of the services it starts.
 
-set -u
+set -Eeuo pipefail
 
 LIBRARY_NAME="${LIBRARY_NAME:-defaultlibraryname}"
 KOHA_WORKERS_ENABLED="${KOHA_WORKERS_ENABLED:-yes}"
@@ -28,6 +28,12 @@ stop_koha_services() {
         koha-worker --stop --queue long_tasks "$LIBRARY_NAME" 2>/dev/null || true
         koha-worker --stop --queue default "$LIBRARY_NAME" 2>/dev/null || true
     fi
+
+    # These commands are harmless when the corresponding optional feature is
+    # disabled, and keep shutdown symmetric with koha-common's init semantics.
+    koha-es-indexer --stop --quiet "$LIBRARY_NAME" 2>/dev/null || true
+    koha-z3950-responder --stop --quiet "$LIBRARY_NAME" 2>/dev/null || true
+    koha-sip --stop "$LIBRARY_NAME" 2>/dev/null || true
 
     koha-indexer --stop "$LIBRARY_NAME" 2>/dev/null || true
     koha-zebra --stop "$LIBRARY_NAME" 2>/dev/null || true
@@ -59,8 +65,11 @@ trap 'shutdown 0' TERM INT
 /docker/entrypoint.sh &
 entrypoint_pid=$!
 
-wait "$entrypoint_pid"
-status=$?
+if wait "$entrypoint_pid"; then
+    status=0
+else
+    status=$?
+fi
 
 if [ "$shutting_down" -eq 0 ]; then
     echo "*** Koha entrypoint exited with status $status"
