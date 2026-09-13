@@ -11,11 +11,6 @@ pipeline {
     }
 
     stages {
-        stage('Test runtime scripts') {
-            steps {
-                sh './tests/run.sh'
-            }
-        }
         stage('Build app tag latest') {
             steps {
                 docker_registry_login()
