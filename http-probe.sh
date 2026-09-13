@@ -6,7 +6,7 @@
 # and watchdog checks use /healthz instead; this script remains available for
 # less-frequent functional checks which exercise normal Koha request handling.
 
-set -u
+set -Eeuo pipefail
 
 port="${1:?usage: http-probe.sh PORT COOKIE_JAR}"
 cookie_jar="${2:?usage: http-probe.sh PORT COOKIE_JAR}"
