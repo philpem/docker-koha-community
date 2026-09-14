@@ -20,7 +20,10 @@ The container starts and manages:
   are enabled for the Koha instance.
 
 `tini` is PID 1. A small runtime supervisor handles SIGTERM/SIGINT and performs
-an ordered shutdown of Apache, cron, the workers and Koha daemons.
+an ordered shutdown of Apache, cron, the workers and Koha daemons. Optional
+SIP, Z39.50 and Elasticsearch daemons are only stopped when they are configured
+for the instance, avoiding misleading "not running" errors during normal
+shutdown.
 
 The following opt-out variables are available for unusual deployments:
 
@@ -29,6 +32,71 @@ The following opt-out variables are available for unusual deployments:
 - `WATCHDOG_ENABLED=no`
 
 They all default to `yes`.
+
+## Startup lifecycle
+
+There are three distinct startup cases. The persistent `/var/lib/koha` volume
+contains the Docker state marker and Koha application data, but the Koha Unix
+account and `/etc/koha/sites/<instance>` configuration live in the container's
+writable layer and therefore behave differently across a restart and a
+recreation.
+
+### Ordinary container restart
+
+On an ordinary restart the container-local Unix account, group and Koha site
+configuration are still present. Startup reuses that local instance and does
+not run `koha-create --use-db` again.
+
+The schema check then runs before any application daemons are started. With
+`KOHA_AUTO_UPGRADE_SCHEMA=yes` this invokes `koha-upgrade-schema` on every
+already-configured startup; when the schema is already current it is a no-op.
+
+### Recreated container
+
+When Docker recreates the container, the persistent `/var/lib/koha` state and
+external MariaDB database remain, but the local Unix account and `/etc/koha`
+instance configuration are absent. Startup detects this cleanly absent local
+state and reconstructs it with:
+
+```
+koha-create --use-db <instance> --passwdfile <temporary-file>
+```
+
+Upstream `koha-create` starts Apache, Zebra, the background workers and the
+indexer as side effects. Those services are immediately quiesced again before
+schema migration or normal runtime startup. This prevents new Koha code or
+workers from running against a database schema which may still need upgrading.
+
+A partially present local instance -- for example, a Unix account without a
+matching Koha site -- is treated as an error rather than being passed to
+`koha-create`, because that state is ambiguous and `koha-create` is not
+idempotent for an existing Unix account.
+
+### First installation
+
+A genuinely new installation uses `koha-create --create-db`. Its Apache, Zebra,
+worker and indexer side effects are also quiesced immediately so the container
+can take ownership of the ordered runtime startup itself.
+
+After configuration and any required schema work, the container performs the
+same managed startup sequence in all cases:
+
+1. install the instance-specific Plack health wrapper;
+2. write and enable the Docker-owned Apache site configuration;
+3. ensure Koha runtime directories exist;
+4. start Plack;
+5. start the Koha indexer;
+6. start Zebra;
+7. start enabled optional SIP, Z39.50 and Elasticsearch services;
+8. start the `default` and `long_tasks` background workers when enabled;
+9. start cron and anacron when enabled;
+10. start the watchdog when enabled;
+11. run Apache in the foreground.
+
+The Docker-owned Apache templates already enable Plack for the OPAC and staff
+interfaces, so startup deliberately does not call `koha-plack --enable`.
+Upstream treats "already enabled" as a non-zero result, which is unsuitable for
+an idempotent strict-mode container startup.
 
 ## Scheduled Koha maintenance
 
@@ -73,6 +141,11 @@ The image stores its own state under:
 The state format is versioned independently of Koha itself. An image refuses to
 start if it sees a state schema newer than it understands.
 
+`/etc/koha` and the `<instance>-koha` Unix account are intentionally not part of
+this persistent state. They are reused on an ordinary restart and reconstructed
+from the persistent marker plus the existing external database when a container
+is recreated, as described in [Startup lifecycle](#startup-lifecycle).
+
 ### Migration from older images
 
 Older versions of this image stored only:
@@ -98,13 +171,24 @@ The v1 -> v2 migration:
 The image records the Koha package version only after schema migration has
 completed successfully.
 
-When the package version changes, startup performs the following sequence:
+For an already-configured installation, startup performs the following sequence:
 
-1. reconnect the existing Koha instance to the external database;
-2. take a `koha-dump --exclude-indexes --exclude-logs` pre-upgrade backup;
-3. run `koha-upgrade-schema`;
-4. refuse to start Koha if schema migration fails;
-5. atomically record the successfully migrated package version.
+1. reuse the existing local Koha instance on an ordinary restart, or reconstruct
+   its local Unix account and `/etc/koha` configuration when the container has
+   been recreated;
+2. if `koha-create` was required, immediately quiesce the Apache, Zebra, worker
+   and indexer processes it starts as side effects;
+3. when the recorded Koha package version has changed, take a
+   `koha-dump --exclude-indexes --exclude-logs` pre-upgrade backup;
+4. run `koha-upgrade-schema` before Plack, Zebra, workers or Apache are started
+   by the container runtime;
+5. refuse to start Koha if schema migration fails;
+6. atomically record the successfully migrated package version;
+7. perform the normal ordered runtime startup described above.
+
+On an ordinary restart with an unchanged package version, the backup step is
+skipped. `koha-upgrade-schema` still runs by default and simply reports that no
+database change is required when the schema is already current.
 
 `KOHA_PRE_UPGRADE_BACKUP=no` disables the automatic pre-upgrade dump.
 `KOHA_AUTO_UPGRADE_SCHEMA=no` retains the older manual-upgrade behaviour; when

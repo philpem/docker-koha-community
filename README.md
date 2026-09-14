@@ -15,11 +15,14 @@ This is an updated version of [Kedu SCCL's original version](https://github.com/
     `koha-common` Debian package inside the container.
   - Version the image-owned persistent state and take a Koha backup before an
     automatic schema migration when the installed Koha package changes.
+  - Reconstruct container-local Koha configuration safely after container
+    recreation while keeping schema migration ahead of the managed runtime daemons.
 
 This can be used standalone to try out Koha, but if you want to deploy this you'll probably want to customise the `docker-compose.yml`.
 
 See [RUNTIME.md](RUNTIME.md) for details of runtime services, scheduled maintenance,
-health checks, persistent-state migration, backups and upgrade behaviour.
+health checks, restart/recreation behaviour, persistent-state migration, backups
+and upgrade behaviour.
 
 
 # Original documentation
@@ -466,10 +469,19 @@ Plack comes up. When the Koha package version changes, the image first takes a
 persistent Koha backup. A failed schema migration is fatal: the container does
 not start the new Koha code against a schema which failed to upgrade.
 
+For details of the exact ordinary-restart and recreated-container startup
+sequences, including how `koha-create` side effects are quiesced before schema
+migration, see [RUNTIME.md](RUNTIME.md#startup-lifecycle).
+
 # Allowed volumes
 
 We recommend to map "/var/lib/koha". The same volume also stores Docker state
 metadata and persistent Koha backups under `/var/lib/koha/backups`.
+
+The Koha Unix account and `/etc/koha/sites/<instance>` configuration are
+container-local rather than persistent. They are reused on an ordinary restart
+and reconstructed automatically from the persistent state and external database
+when the container is recreated; see [RUNTIME.md](RUNTIME.md#startup-lifecycle).
 
 Example:
 
