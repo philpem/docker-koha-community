@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0"
+    xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+    xmlns:marc="http://www.loc.gov/MARC21/slim"
+    exclude-result-prefixes="marc">
+
+    <xsl:output method="xml" encoding="UTF-8"/>
+
+    <!-- Copy the incoming MARC record unchanged unless matched below. -->
+    <xsl:template match="@*|node()">
+        <xsl:copy>
+            <xsl:apply-templates select="@*|node()"/>
+        </xsl:copy>
+    </xsl:template>
+
+    <!-- An explicitly present but empty 003 belongs to this configured source. -->
+    <xsl:template match="marc:controlfield[@tag='003'][not(normalize-space(.))]">
+        <marc:controlfield tag="003">${MARC003_CODE}</marc:controlfield>
+    </xsl:template>
+
+    <!-- 003 identifies the agency responsible for 001. If 001 exists but 003
+         does not, put the configured source identifier immediately after 001. -->
+    <xsl:template match="marc:controlfield[@tag='001'][not(../marc:controlfield[@tag='003'])]">
+        <xsl:copy>
+            <xsl:apply-templates select="@*|node()"/>
+        </xsl:copy>
+        <marc:controlfield tag="003">${MARC003_CODE}</marc:controlfield>
+    </xsl:template>
+
+</xsl:stylesheet>

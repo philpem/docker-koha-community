@@ -315,6 +315,10 @@ start_koha() {
     apachectl -D FOREGROUND
 }
 
+# Generate per-source XSLTs before Koha starts. This is independent of the
+# database and makes runtime environment customisation effective on every boot.
+/docker/generate-marc003-xslts.sh
+
 update_koha_database_conf
 update_koha_sites
 update_httpd_listening_ports
