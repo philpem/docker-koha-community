@@ -8,12 +8,14 @@ scripts=(
     entrypoint.sh
     runtime.sh
     state.sh
+    generate-marc003-xslts.sh
     watchdog.sh
     healthcheck.sh
     healthz-probe.sh
     http-probe.sh
     tests/test-state.sh
     tests/test-http-probe.sh
+    tests/test-marc003-xslts.sh
     tests/run.sh
 )
 
@@ -23,5 +25,6 @@ done
 
 ./tests/test-state.sh
 ./tests/test-http-probe.sh
+bash ./tests/test-marc003-xslts.sh
 
 echo "all tests: OK"
