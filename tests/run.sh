@@ -16,6 +16,7 @@ scripts=(
     tests/test-state.sh
     tests/test-http-probe.sh
     tests/test-marc003-xslts.sh
+    tests/test-reconnect-db.sh
     tests/run.sh
 )
 
@@ -26,5 +27,6 @@ done
 ./tests/test-state.sh
 ./tests/test-http-probe.sh
 bash ./tests/test-marc003-xslts.sh
+bash ./tests/test-reconnect-db.sh
 
 echo "all tests: OK"
