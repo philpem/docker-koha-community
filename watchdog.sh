@@ -7,7 +7,7 @@
 # failure from a broken proxy/Plack path so a MariaDB outage does not cause a
 # pointless Plack restart loop.
 
-set -u
+set -Eeuo pipefail
 
 LIBRARY_NAME="${LIBRARY_NAME:-defaultlibraryname}"
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
@@ -28,6 +28,16 @@ restart_plack() {
     fi
 }
 
+probe_healthz() {
+    local port="$1"
+
+    if WATCHDOG_HTTP_TIMEOUT="$WATCHDOG_HTTP_TIMEOUT" /docker/healthz-probe.sh "$port"; then
+        return 0
+    else
+        return $?
+    fi
+}
+
 opac_failures=0
 intra_failures=0
 database_unhealthy=0
@@ -39,8 +49,11 @@ while true; do
 
     restarted=0
 
-    WATCHDOG_HTTP_TIMEOUT="$WATCHDOG_HTTP_TIMEOUT" /docker/healthz-probe.sh "$OPACPORT"
-    result=$?
+    if probe_healthz "$OPACPORT"; then
+        result=0
+    else
+        result=$?
+    fi
     case "$result" in
         0)
             opac_failures=0
@@ -74,8 +87,11 @@ while true; do
     esac
 
     if [ "$restarted" = 0 ]; then
-        WATCHDOG_HTTP_TIMEOUT="$WATCHDOG_HTTP_TIMEOUT" /docker/healthz-probe.sh "$INTRAPORT"
-        result=$?
+        if probe_healthz "$INTRAPORT"; then
+            result=0
+        else
+            result=$?
+        fi
         case "$result" in
             0)
                 intra_failures=0
