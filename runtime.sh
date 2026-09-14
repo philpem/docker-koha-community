@@ -14,6 +14,11 @@ KOHA_CRON_ENABLED="${KOHA_CRON_ENABLED:-yes}"
 entrypoint_pid=""
 shutting_down=0
 
+instance_feature_enabled() {
+    local feature="$1"
+    koha-list --enabled "--${feature}" | grep -Fxq "$LIBRARY_NAME"
+}
+
 stop_koha_services() {
     echo "*** Stopping Koha services..."
 
@@ -29,11 +34,17 @@ stop_koha_services() {
         koha-worker --stop --queue default "$LIBRARY_NAME" 2>/dev/null || true
     fi
 
-    # These commands are harmless when the corresponding optional feature is
-    # disabled, and keep shutdown symmetric with koha-common's init semantics.
-    koha-es-indexer --stop --quiet "$LIBRARY_NAME" 2>/dev/null || true
-    koha-z3950-responder --stop --quiet "$LIBRARY_NAME" 2>/dev/null || true
-    koha-sip --stop "$LIBRARY_NAME" 2>/dev/null || true
+    # Only stop optional daemons which are configured for this instance. This
+    # avoids noisy "not running" errors during normal shutdown.
+    if instance_feature_enabled elasticsearch; then
+        koha-es-indexer --stop --quiet "$LIBRARY_NAME" >/dev/null 2>&1 || true
+    fi
+    if instance_feature_enabled z3950; then
+        koha-z3950-responder --stop --quiet "$LIBRARY_NAME" >/dev/null 2>&1 || true
+    fi
+    if instance_feature_enabled sip; then
+        koha-sip --stop "$LIBRARY_NAME" >/dev/null 2>&1 || true
+    fi
 
     koha-indexer --stop "$LIBRARY_NAME" 2>/dev/null || true
     koha-zebra --stop "$LIBRARY_NAME" 2>/dev/null || true

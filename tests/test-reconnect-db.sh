@@ -21,6 +21,11 @@ export DB_ROOT_PASSWORD=secret
 export DB_HOST=koha-db
 export MOCK_LOG="$tmp/koha-create.log"
 export MOCK_PASSWD_COPY="$tmp/passwd-file"
+QUIESCE_COUNT=0
+
+stop_koha_create_services() {
+    QUIESCE_COUNT=$((QUIESCE_COUNT + 1))
+}
 
 cat > "$tmp/bin/getent" <<'EOF'
 #!/bin/bash
@@ -61,6 +66,7 @@ reset_mocks() {
     export MOCK_GROUP_EXISTS=no
     export MOCK_SITE_EXISTS=no
     export MOCK_KOHA_CREATE_STATUS=0
+    QUIESCE_COUNT=0
     rm -f "$MOCK_LOG" "$MOCK_PASSWD_COPY"
 }
 
@@ -72,16 +78,19 @@ export MOCK_GROUP_EXISTS=yes
 export MOCK_SITE_EXISTS=yes
 reconnect_db
 [ ! -e "$MOCK_LOG" ] || fail "ordinary restart invoked koha-create"
+[ "$QUIESCE_COUNT" -eq 0 ] || fail "ordinary restart quiesced services"
 
 # Container recreation: persistent data says the instance is configured, but
 # /etc/koha and the Unix account came from the old writable container layer and
-# are gone. Recreate that local state against the existing database.
+# are gone. Recreate that local state against the existing database, then stop
+# the daemons koha-create starts before the normal runtime startup continues.
 reset_mocks
 reconnect_db
 [ "$(wc -l < "$MOCK_LOG")" -eq 1 ] || fail "container recreation did not invoke koha-create exactly once"
 grep -Fx -- '--use-db library --passwdfile ' "$MOCK_LOG" >/dev/null 2>&1 && fail "passwdfile path unexpectedly empty"
 grep -F -- '--use-db library --passwdfile ' "$MOCK_LOG" >/dev/null || fail "koha-create was called with the wrong arguments"
 [ "$(cat "$MOCK_PASSWD_COPY")" = 'library:root:secret:koha_library:koha-db' ] || fail "passwd file contents are wrong"
+[ "$QUIESCE_COUNT" -eq 1 ] || fail "container recreation did not quiesce koha-create services exactly once"
 
 # A half-present local instance should not be handed to koha-create: it would
 # either fail with 'User ... already exists' or risk masking damaged state.
@@ -91,13 +100,16 @@ if reconnect_db 2>/dev/null; then
     fail "partial local state was accepted"
 fi
 [ ! -e "$MOCK_LOG" ] || fail "partial local state invoked koha-create"
+[ "$QUIESCE_COUNT" -eq 0 ] || fail "partial local state quiesced services"
 
-# Real koha-create failures must remain fatal under strict startup handling.
+# Real koha-create failures must remain fatal under strict startup handling, and
+# must not run cleanup as though reconstruction had succeeded.
 reset_mocks
 export MOCK_KOHA_CREATE_STATUS=23
 if reconnect_db 2>/dev/null; then
     fail "koha-create failure was ignored"
 fi
 [ -e "$MOCK_LOG" ] || fail "koha-create failure test did not invoke koha-create"
+[ "$QUIESCE_COUNT" -eq 0 ] || fail "failed koha-create unexpectedly quiesced services"
 
 echo "reconnect DB tests: OK"

@@ -138,7 +138,19 @@ update_apache2_conf () {
         # TODO2: remove hardvoded values of 'templates/koha.conf' and unify it with 'templates/koha-no-domain.conf'
         envsubst < /docker/templates/koha-no-domain.conf > /etc/apache2/sites-available/${LIBRARY_NAME}.conf
     fi
-    a2ensite ${LIBRARY_NAME}
+    a2ensite "$LIBRARY_NAME" >/dev/null
+}
+
+stop_koha_create_services () {
+    echo "*** Quiescing services started by koha-create..."
+
+    # koha-create starts these daemons as a side effect. Stop them before schema
+    # upgrade and before the container's own ordered runtime startup. Some are
+    # optional, so cleanup failures here are intentionally ignored.
+    service apache2 stop >/dev/null 2>&1 || true
+    koha-worker --all-queues --stop "$LIBRARY_NAME" >/dev/null 2>&1 || true
+    koha-indexer --stop "$LIBRARY_NAME" >/dev/null 2>&1 || true
+    koha-zebra --stop "$LIBRARY_NAME" >/dev/null 2>&1 || true
 }
 
 reconnect_db () {
@@ -184,6 +196,7 @@ reconnect_db () {
         return 1
     fi
     rm -f "$passwd_file"
+    stop_koha_create_services
 }
 
 upgrade_schema () {
@@ -229,13 +242,12 @@ create_db () {
     then
         echo "*** Database already exists"
         reconnect_db
-        # Needed because 'koha-create' restarts apache and puts process in background"
         echo "*** Manual indexing is needed..."
         koha-rebuild-zebra -v --full "$LIBRARY_NAME"
     else
         echo "*** koha-create with db"
         koha-create --create-db "$LIBRARY_NAME"
-        # Needed because 'koha-create' restarts apache and puts process in background"
+        stop_koha_create_services
         fix_database_permissions
     fi
 }
@@ -264,8 +276,8 @@ start_workers() {
         echo "*** Starting Koha background workers..."
         # Use explicit queues for compatibility with Koha versions predating
         # koha-worker --all-queues.
-        koha-worker --restart --queue default "$LIBRARY_NAME"
-        koha-worker --restart --queue long_tasks "$LIBRARY_NAME"
+        koha-worker --start --queue default "$LIBRARY_NAME"
+        koha-worker --start --queue long_tasks "$LIBRARY_NAME"
     else
         echo "*** Koha background workers disabled via KOHA_WORKERS_ENABLED"
     fi
@@ -327,14 +339,11 @@ start_koha() {
     echo "*** Ensuring Koha runtime directories exist..."
     koha-create-dirs "$LIBRARY_NAME"
     echo "*** Starting koha with plack..."
-    koha-plack --start $LIBRARY_NAME
-    # koha-create (run by reconnect_db) already starts the indexer, so use
-    # --restart here to avoid the "already running: failed!" warning on
-    # the second invocation while still working on a fresh boot.
+    koha-plack --start "$LIBRARY_NAME"
     echo "*** Starting indexer..."
-    koha-indexer --restart $LIBRARY_NAME
+    koha-indexer --start "$LIBRARY_NAME"
     echo "*** Starting zebra..."
-    koha-zebra --start $LIBRARY_NAME
+    koha-zebra --start "$LIBRARY_NAME"
     start_optional_services
     start_workers
     start_scheduler
@@ -378,8 +387,4 @@ fi
 # non-zero when Plack is already enabled, which is fatal under strict mode.
 install_plack_health
 update_apache2_conf
-
-# koha-create starts apache as a side effect; stop it so we can
-# relaunch in the foreground with start_koha
-service apache2 stop 2>/dev/null || true
 start_koha
