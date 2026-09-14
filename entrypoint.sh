@@ -240,11 +240,6 @@ create_db () {
     fi
 }
 
-enable_plack () {
-    echo "*** Enabling and starting plack..."
-    koha-plack --enable ${LIBRARY_NAME}
-}
-
 install_plack_health () {
     echo "*** Installing Plack health-check wrapper..."
     install \
@@ -378,7 +373,9 @@ else
     upgrade_schema
 fi
 
-enable_plack
+# The Docker-owned Apache templates already enable Plack for both OPAC and
+# intranet. Do not call `koha-plack --enable` here: upstream deliberately exits
+# non-zero when Plack is already enabled, which is fatal under strict mode.
 install_plack_health
 update_apache2_conf
 
