@@ -18,6 +18,7 @@ scripts=(
     tests/test-marc003-xslts.sh
     tests/test-reconnect-db.sh
     tests/test-plack-config.sh
+    tests/test-runtime-lifecycle.sh
     tests/run.sh
 )
 
@@ -30,5 +31,6 @@ done
 bash ./tests/test-marc003-xslts.sh
 bash ./tests/test-reconnect-db.sh
 bash ./tests/test-plack-config.sh
+bash ./tests/test-runtime-lifecycle.sh
 
 echo "all tests: OK"

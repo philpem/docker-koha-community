@@ -44,12 +44,15 @@ RUN \
     koha-common && \
   rm -rf /var/lib/apt/lists/*
 
-# Enable some Apache modules and disable the default site
+# Enable the Apache modules Koha needs, disable the default site and give
+# Apache a harmless global identity so utility invocations do not emit AH00558.
 RUN a2enmod rewrite \
            headers \
            proxy_http \
            cgi \
     && a2dissite 000-default \
+    && printf '%s\n' 'ServerName localhost' > /etc/apache2/conf-available/docker-servername.conf \
+    && a2enconf docker-servername \
     && rm -R /var/www/html/
 
 RUN mkdir /docker
