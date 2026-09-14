@@ -143,6 +143,39 @@ update_apache2_conf () {
 
 reconnect_db () {
     local passwd_file
+    local unix_user="${LIBRARY_NAME}-koha"
+    local user_exists=no
+    local group_exists=no
+    local site_exists=no
+
+    if getent passwd "$unix_user" >/dev/null; then
+        user_exists=yes
+    fi
+    if getent group "$unix_user" >/dev/null; then
+        group_exists=yes
+    fi
+    if koha-list | grep -Fxq "$LIBRARY_NAME"; then
+        site_exists=yes
+    fi
+
+    # An ordinary restart keeps the writable container layer, so the Koha Unix
+    # account and /etc/koha site configuration already exist. koha-create
+    # --use-db is not idempotent and deliberately fails if that user exists.
+    if [ "$user_exists" = yes ] && [ "$group_exists" = yes ] && [ "$site_exists" = yes ]; then
+        echo "*** Koha instance already configured locally; reusing it"
+        return 0
+    fi
+
+    # A recreated container has none of the local instance state but retains the
+    # configured marker and database through persistent storage. Rebuild that
+    # state below. Anything in between is inconsistent and should fail loudly
+    # instead of letting koha-create trip over a half-existing instance.
+    if [ "$user_exists" = yes ] || [ "$group_exists" = yes ] || [ "$site_exists" = yes ]; then
+        echo "ERROR: incomplete local Koha instance state for ${LIBRARY_NAME} (user=${user_exists}, group=${group_exists}, site=${site_exists})" >&2
+        return 1
+    fi
+
+    echo "*** Recreating local Koha instance configuration for existing database..."
     passwd_file=$(mktemp)
     chmod 600 "$passwd_file"
     printf '%s\n' "$LIBRARY_NAME:root:$DB_ROOT_PASSWORD:koha_$LIBRARY_NAME:$DB_HOST" > "$passwd_file"
